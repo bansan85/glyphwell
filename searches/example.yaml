@@ -1,0 +1,128 @@
+# Gabarit de recherche glyphwell — à dupliquer et adapter.
+#
+# Ce fichier est de la donnée : aucun code n'en est exécuté. Il est versionnable et haché
+# (SHA-256 du texte intégral). Ce hash identifie la recherche : dès que le fichier change,
+# `glyphwell search run` crée un nouveau run plutôt que de réutiliser des résultats obtenus
+# avec un prompt différent. Un run en cours reste donc reprenable même si vous éditez ce
+# fichier entre-temps.
+#
+# Lancement :  uv run glyphwell search run searches/example.yaml --limit 20
+
+name: exemple
+description: >
+  Repère les scènes où un personnage cuisine ou parle de cuisine. Sert surtout à vérifier
+  la chaîne complète sur un petit échantillon avant de lancer une vraie recherche.
+
+# Modèle Ollama. Doit être disponible localement (`ollama pull llama3.1:8b`) : la commande
+# le vérifie avant de parcourir le corpus.
+model: llama3.1:8b
+
+# Options transmises telles quelles à Ollama.
+# temperature 0 : on veut des résultats reproductibles d'un run à l'autre.
+# num_ctx doit rester supérieur à la taille de fenêtre, sinon le modèle tronque le contexte.
+options:
+  temperature: 0
+  num_ctx: 8192
+
+# --------------------------------------------------------------------------------------
+# Quels sous-titres analyser
+# --------------------------------------------------------------------------------------
+# Les filtres portant sur le titre (type, année, contenu adulte) exigent que les datasets
+# IMDb aient été importés : `glyphwell metadata fetch-imdb && glyphwell metadata import-imdb`.
+# Sans eux, les fichiers dont l'identifiant n'est pas résolu sont écartés.
+select:
+  languages: [en]
+  title_types: [movie, tvEpisode] # vide = tous les types
+  years:
+    min: null
+    max: null
+  exclude_adult: true
+  imdb_ids: null # ou une liste explicite : ["tt0133093"]
+
+# --------------------------------------------------------------------------------------
+# Fenêtrage — unité d'appel au modèle ET unité de reprise
+# --------------------------------------------------------------------------------------
+# Un sous-titre est découpé en fenêtres de `size` phrases, avec `overlap` phrases répétées
+# d'une fenêtre à la suivante pour ne pas couper un échange en deux.
+#
+# `size` plus grand = moins d'appels, plus de contexte, mais un grain de reprise plus
+# grossier : une interruption fait reperdre au plus une fenêtre de travail.
+# `overlap` doit rester strictement inférieur à `size`.
+chunk:
+  size: 80
+  overlap: 10
+
+# --------------------------------------------------------------------------------------
+# Pré-filtre — évalué localement, avant tout appel au modèle
+# --------------------------------------------------------------------------------------
+# Un appel LLM coûte des ordres de grandeur de plus qu'une recherche de sous-chaîne. Sur des
+# centaines de milliers de sous-titres, c'est le principal levier sur la durée totale.
+#
+# À calibrer large : le pré-filtre ne doit jamais écarter une fenêtre que le modèle aurait
+# retenue. En cas de doute, préférer `off`.
+#
+# mode : any (au moins un motif) | all (tous) | none (aucun) | off (pas de filtrage)
+prefilter:
+  mode: any
+  patterns:
+    - kitchen
+    - recipe
+    - cooking
+    - dinner
+  case_sensitive: false
+  regex: false
+
+# --------------------------------------------------------------------------------------
+# Prompt
+# --------------------------------------------------------------------------------------
+# Substitutions disponibles :
+#   {{ title }}     libellé du titre résolu, ou l'identifiant IMDb à défaut
+#   {{ year }}      année de sortie, si connue
+#   {{ imdb_id }}   identifiant IMDb canonique
+#   {{ first_id }}  identifiant de la première phrase de la fenêtre
+#   {{ last_id }}   identifiant de la dernière phrase de la fenêtre
+#   {{ chunk }}     les lignes de la fenêtre, préfixées de leur identifiant
+prompt:
+  system: |
+    Tu analyses des extraits de sous-titres de films et de séries.
+    Tu réponds uniquement par un objet JSON conforme au schéma demandé.
+    Tu ne cites que des répliques réellement présentes dans l'extrait fourni.
+    En cas de doute, réponds matched: false.
+
+  user: |
+    Titre : {{ title }} ({{ year }}) — {{ imdb_id }}
+    Extrait : lignes {{ first_id }} à {{ last_id }}
+
+    {{ chunk }}
+
+    Cet extrait montre-t-il un personnage en train de cuisiner, ou une conversation
+    portant sur la préparation d'un repas ?
+
+# --------------------------------------------------------------------------------------
+# Sortie attendue
+# --------------------------------------------------------------------------------------
+# `schema` est transmis à Ollama pour contraindre la génération, puis la réponse est
+# revérifiée côté client : la contrainte réduit les écarts, elle ne les élimine pas.
+output:
+  format: json
+  schema:
+    type: object
+    properties:
+      matched:
+        type: boolean
+        description: Vrai si l'extrait correspond à la question posée.
+      confidence:
+        type: number
+        description: Confiance entre 0 et 1.
+      quotes:
+        type: array
+        description: Répliques citées littéralement depuis l'extrait.
+        items:
+          type: string
+    required: [matched]
+    additionalProperties: false
+
+# Champ booléen de la réponse qui alimente la colonne `results.matched`, et donc ce que
+# `glyphwell search export` retient par défaut. `null` : tout résultat produit compte comme
+# une correspondance.
+match_when: matched

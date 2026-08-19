@@ -1,0 +1,34 @@
+# Installation : uv run pre-commit install
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # mypy tourne en local : il a besoin des dépendances réelles du projet
+      # (pydantic, typer) pour que le mode strict soit exact.
+      - id: mypy
+        name: mypy (très strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
