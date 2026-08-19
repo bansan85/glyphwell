@@ -67,7 +67,7 @@ mypy est configuré en **mode très strict** dans `pyproject.toml`. Règles à c
   sur `tests/`, décorateurs Typer et pytest inclus. Si une future dépendance impose une
   dérogation, la restreindre au module concerné et l'expliquer ici.
 
-Deux pièges rencontrés, à ne pas réintroduire :
+Quatre pièges rencontrés, à ne pas réintroduire :
 
 - **PEP 695 et Typer.** Typer introspecte les annotations à l'exécution et ne sait pas
   déballer un `TypeAliasType`. Un `type X = Literal[...]` utilisé dans une signature de
@@ -82,23 +82,69 @@ Deux pièges rencontrés, à ne pas réintroduire :
   [cli/context.py](src/glyphwell/cli/context.py), pas dans `cli/__init__.py` : les modules de
   sous-commandes en dépendent, et `cli/__init__.py` dépend de leurs `Typer`. Les importer
   depuis le paquet créerait un cycle que mypy signale par `Cannot determine type of "app"`.
+- **Une seule `Console` Rich.** Elle vit dans [console.py](src/glyphwell/console.py) et
+  personne n'en construit d'autre — ni les sous-commandes, ni le `RichHandler` de
+  [logging.py](src/glyphwell/logging.py), qui la reçoit explicitement. Rich ne coordonne un
+  affichage vivant (`Progress`, `Live`) avec les écritures ordinaires que si les deux passent
+  par la *même* instance : chacune tient sa propre position de curseur. Avec deux consoles, la
+  moindre ligne de journal émise pendant un téléchargement s'écrit par-dessus la barre de
+  progression. `RichHandler()` sans argument prend la console globale de Rich — c'est
+  précisément le piège.
 
 ## 4. Sources de données et leurs pièges
 
 ### Corpus OPUS OpenSubtitles (`opustools`)
 
-- Corpus `OpenSubtitles`, version `v2018`, langue `en`, préprocessing **`raw`** (texte non
+- Corpus `OpenSubtitles`, version **`v2024`**, langue `en`, préprocessing **`raw`** (texte non
   tokenisé, balises `<s id="...">` et `<time>`). Le format `xml`/parsed découpe en `<w>` — inutile ici.
-- Arborescence attendue : `<langue>/<année>/<imdb_id>/<opus_file_id>.xml`, avec un
-  **identifiant IMDb sans préfixe `tt` et zéro-paddé** (`133093` donne `tt0133093`).
-  ⚠️ Cette structure **n'est pas documentée** sur le site OPUS actuel ; elle est déduite
-  de l'usage. Toute la normalisation est isolée dans
-  [corpus/layout.py](src/glyphwell/corpus/layout.py) et couverte par un test sur
-  échantillon — à confirmer et ajuster après le premier `corpus fetch` réel.
-- Les XML restent **tels quels sur le disque** : jamais réécrits, jamais réindexés.
+  L'index connaît sept releases (`v1`, `v2011`, `v2012`, `v2013`, `v2016`, `v2018`, `v2024`) ;
+  `v2024` est la plus récente et la plus complète.
+- **L'archive zip n'est jamais décompressée.** Elle *est* le corpus : les sous-titres en sont
+  lus membre par membre via [corpus/archive.py](src/glyphwell/corpus/archive.py). On évite
+  ainsi des dizaines de Go et des centaines de milliers d'inodes, et le corpus reste un
+  artefact unique vérifiable par une seule empreinte. Deux conséquences à connaître :
+  `zipfile` charge tout le répertoire central à l'ouverture (~150 Mo pour 400 000 membres),
+  et les lectures concurrentes sur un même handle se sérialisent — **un handle par thread**.
+- Arborescence interne, **préfixe compris** :
+  `<corpus>/<preprocessing>/<langue>/<année>/<imdb_id>/<opensubtitles_file_id>.xml`, par
+  exemple `OpenSubtitles/raw/fr/2022/1596342/1957893755.xml`. L'identifiant IMDb y est **nu**
+  (`1596342` → `tt1596342`). Le dernier segment est l'identifiant du sous-titre **sur
+  opensubtitles.org**, pas un identifiant OPUS : il désigne une traduction précise là où
+  l'`ImdbId` désigne l'œuvre. Ne pas confondre les deux — c'est la raison d'être des alias
+  distincts de [types.py](src/glyphwell/types.py).
+- Les membres de sous-titres sont des `.xml` **simples** : le zip est le seul niveau de
+  compression. `corpus fetch` compte les membres au suffixe inattendu et les signale plutôt
+  que de coder défensivement contre un cas hypothétique. Les fichiers de service `INFO`,
+  `README`, `LICENSE` à la racine de l'archive sont comptés à part, sans alarme.
 - L'attribut `id` des balises `<s>` est la clé de la reprise. Il est ordonné mais pas
   nécessairement contigu ni purement numérique — le traiter comme un ordinal opaque.
 - Les XML OPUS ne sont pas toujours bien formés : `lxml` avec `recover=True`.
+
+#### Pièges d'`opustools` et de l'API OPUS
+
+Tous vérifiés contre `opustools` 1.8.3 et l'index en ligne. Ne pas les réintroduire.
+
+- **Le stub était faux.** La vraie signature est `OpusGet(source, target, directory, release,
+  preprocess, list_resources, list_languages, list_corpora, download_dir, local_db,
+  suppress_prompts, database)` : `directory` est le *nom du corpus*, `source` la *langue*.
+  `get_corpora_data()` ne prend aucun argument et rend une taille **formatée en chaîne**.
+  Ne jamais réécrire [le stub](stubs/opustools/__init__.pyi) de mémoire.
+- **`OpusGet.get_files()` n'échoue jamais** : il avale `urllib.error.URLError` pour se
+  contenter d'un `print`, n'a pas de délai d'attente, ne sait pas reprendre, et écrit
+  directement sous le nom définitif. Une coupure à 90 % laisserait une archive tronquée
+  indiscernable d'une archive complète. D'où le transfert par `httpx` vers un `.part` repris
+  par en-tête `Range`, renommé seulement une fois terminé.
+- **Le joker « une espace » ne marche pas en ligne.** Le code d'`OpusGet` suggère que
+  `release=" "` émet `version=` et signifie « toutes les versions » ; l'API rend alors zéro
+  résultat. Il faut **omettre** le paramètre (chaîne vide, qu'`OpusGet` n'émet pas).
+- **En préprocessing `raw`, l'index rend l'archive monolingue de *chaque* langue appariée**
+  à celle demandée. Filtrer sur `target == ""` ne suffit pas : sans `source == language`, une
+  requête `en` remonte une cinquantaine de candidats (`eo`, `es`, `en_ze`...) et le premier
+  venu serait téléchargé.
+- `OpusGet.url` se termine par `&`, que son propre code retire à l'appel.
+- `make_file_name()` remplace la version par `latest` dans le nom quand `release == "latest"` :
+  construire l'instance avec la version **concrète** de l'enregistrement.
+- Le champ `size` de l'index est en **kilo-octets** et arrondi (cf. `format_size`).
 
 ### Datasets IMDb officiels (seule source de métadonnées)
 
@@ -121,9 +167,10 @@ genre devient nécessaire, la voie IMDb est `title.ratings.tsv.gz` (`averageRati
 
 ### Volume
 
-Le corpus anglais complet : plusieurs dizaines de Go décompressés, centaines de milliers
-de fichiers. `GLYPHWELL_DATA_DIR` doit pointer vers un disque adéquat. `data/` est
-gitignoré et entièrement reconstructible.
+L'archive anglaise `v2024` / `raw` : **35,8 Go** (13,7 Go pour `v2018`), plusieurs centaines
+de milliers de membres. Elle n'est pas décompressée : prévoir sa taille, pas son double.
+`GLYPHWELL_DATA_DIR` doit pointer vers un disque adéquat. `data/` est gitignoré et
+entièrement reconstructible.
 
 ## 5. Invariants de la reprise
 
@@ -159,7 +206,7 @@ le catalogue et l'état de progression y vivent. Schéma déclaré dans
 | Table | Rôle |
 |---|---|
 | `titles` | Titres IMDb : type, titre, année, rattachement épisode vers série. |
-| `subtitle_files` | Un fichier XML du corpus : chemin, imdb_id, sha256, version OPUS. |
+| `subtitle_files` | Un membre de l'archive : nom du membre, imdb_id, sha256, version OPUS. |
 | `runs` | Une exécution de recherche : manifeste, son hash, son instantané, modèle, statut. |
 | `run_files` | File de travail et **point de reprise** (`last_sentence_id`) par fichier. |
 | `results` | Une réponse du modèle par fenêtre, avec sa plage de phrases. |
@@ -168,17 +215,22 @@ le catalogue et l'état de progression y vivent. Schéma déclaré dans
 
 ## 7. Périmètre actuel
 
-Le squelette est en place. **Opérationnel** : packaging, configuration, journalisation,
-schéma et migrations SQLite (`db init` produit une base valide), câblage complet de la
-CLI, chargement + validation + hachage des manifestes YAML, calcul de sha256.
+Le squelette est en place, et **l'étape 1 est opérationnelle**.
+
+**Opérationnel** : packaging, configuration, journalisation, schéma et migrations SQLite
+(`db init` produit une base valide), câblage complet de la CLI, chargement + validation +
+hachage des manifestes YAML, calcul de sha256, et surtout `glyphwell corpus fetch` —
+résolution dans l'index OPUS ([corpus/opus.py](src/glyphwell/corpus/opus.py)), téléchargement
+reprenable, lecture de l'archive sans décompression
+([corpus/archive.py](src/glyphwell/corpus/archive.py)), traçabilité dans `corpus_downloads`
+(`CorpusDownloadsRepository`, seul dépôt implémenté à ce jour).
 
 **Stubs typés** (`raise NotImplementedError`, signatures déjà complètes et vertes sous
 mypy strict) — points d'entrée pour la suite :
 
 | Module | À implémenter |
 |---|---|
-| [corpus/opus.py](src/glyphwell/corpus/opus.py) | téléchargement + extraction via `opustools` |
-| [corpus/layout.py](src/glyphwell/corpus/layout.py) | parse du chemin, normalisation de l'imdb_id |
+| [corpus/layout.py](src/glyphwell/corpus/layout.py) | parse du nom de membre, normalisation de l'imdb_id |
 | [corpus/reader.py](src/glyphwell/corpus/reader.py) | lecture XML en streaming vers `Sentence` |
 | [corpus/chunker.py](src/glyphwell/corpus/chunker.py) | fenêtre glissante size/overlap |
 | [metadata/imdb_datasets.py](src/glyphwell/metadata/imdb_datasets.py) | download + import TSV |
@@ -189,8 +241,16 @@ mypy strict) — points d'entrée pour la suite :
 | [search/engine.py](src/glyphwell/search/engine.py) | boucle, concurrence, arrêt propre |
 | [search/checkpoint.py](src/glyphwell/search/checkpoint.py) | lecture/écriture du curseur |
 | [search/results.py](src/glyphwell/search/results.py) | validation de la sortie, export |
-| [db/repositories.py](src/glyphwell/db/repositories.py) | accès typé aux tables |
+| [db/repositories.py](src/glyphwell/db/repositories.py) | accès typé aux tables, hors `corpus_downloads` |
 
 Ordre d'attaque suggéré : `corpus/layout.py`, `corpus/reader.py` et `corpus/chunker.py`
 (fonctions pures, testables sans réseau), puis `db/repositories.py`, puis
 `metadata/imdb_datasets.py`, et enfin `search/` avec `ollama/`.
+
+Deux décisions de l'étape 1 contraignent la suite :
+
+- `parse_entry` doit **absorber le préfixe** `<corpus>/<preprocessing>/` du nom de membre.
+- `subtitle_files.rel_path` stocke le **nom de membre complet**, préfixe inclus : c'est la
+  seule clé qui permette `CorpusArchive.open_member()`. `iter_corpus` prend désormais un
+  `CorpusArchive`, pas une racine de répertoire.
+- `corpus/reader.py` lira un flux (`IO[bytes]`) issu de l'archive, pas un `Path`.

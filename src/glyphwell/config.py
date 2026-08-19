@@ -52,7 +52,10 @@ class Settings(BaseSettings):
     )
 
     opus_corpus: str = Field(default="OpenSubtitles")
-    opus_version: str = Field(default="v2018")
+    opus_version: str = Field(
+        default="v2024",
+        description="Release OPUS. La plus récente, donc la plus complète : 35,8 Go en `en`.",
+    )
     opus_language: str = Field(default="en")
 
     log_level: LogLevel = Field(default="INFO")
@@ -64,12 +67,17 @@ class Settings(BaseSettings):
 
     @property
     def corpus_dir(self) -> Path:
-        """Racine du corpus extrait : ``<data_dir>/corpus/<langue>/<année>/<imdb>/``."""
+        """Répertoire du corpus : c'est là que vit l'archive OPUS.
+
+        L'archive n'est jamais décompressée (cf. `glyphwell.corpus.archive`) : ce
+        répertoire contient un fichier zip par couple (release, langue), pas une
+        arborescence de sous-titres.
+        """
         return self.data_dir / "corpus"
 
     @property
     def downloads_dir(self) -> Path:
-        """Archives téléchargées (tarballs OPUS, TSV des datasets IMDb)."""
+        """TSV des datasets IMDb. L'archive OPUS, elle, vit dans `corpus_dir`."""
         return self.data_dir / "downloads"
 
     @property

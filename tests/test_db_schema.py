@@ -38,8 +38,10 @@ def test_no_full_text_index(db: sqlite3.Connection) -> None:
 def test_results_unique_constraint_enforces_idempotence(db: sqlite3.Connection) -> None:
     """Garantie centrale de la reprise : une fenêtre ne peut pas être enregistrée deux fois."""
     db.execute(
-        "INSERT INTO subtitle_files (opus_version, language, imdb_id, opus_file_id, rel_path)"
-        " VALUES ('v2018', 'en', 'tt0133093', '3660124', 'en/1999/0133093/3660124.xml')"
+        "INSERT INTO subtitle_files"
+        " (opus_version, language, imdb_id, opensubtitles_file_id, rel_path)"
+        " VALUES ('v2018', 'en', 'tt0133093', '3660124',"
+        " 'OpenSubtitles/raw/en/1999/0133093/3660124.xml')"
     )
     db.execute(
         "INSERT INTO runs (manifest_path, manifest_hash, manifest_snapshot, model)"

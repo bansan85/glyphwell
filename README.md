@@ -5,8 +5,9 @@ Recherche pilotée par LLM sur l'intégralité du corpus de sous-titres OpenSubt
 `glyphwell` enchaîne quatre étapes :
 
 1. **Télécharger** les sous-titres — corpus OPUS *OpenSubtitles*, langue `en`, format `raw`
-   (XML non tokenisé), via [`opustools`](https://pypi.org/project/opustools/).
-2. **Résoudre les titres** — les fichiers du corpus sont classés par identifiant IMDb,
+   (XML non tokenisé), via [`opustools`](https://pypi.org/project/opustools/). L'archive
+   n'est jamais décompressée : les sous-titres en sont lus à la volée.
+2. **Résoudre les titres** — les sous-titres sont classés par identifiant IMDb,
    et les datasets IMDb officiels se joignent directement sur cet identifiant : titre,
    type (film / série / épisode), année, flag adulte, rattachement épisode → série.
    Hors-ligne, sans clé API.
@@ -24,9 +25,49 @@ pip install uv          # une fois, si uv n'est pas déjà présent
 uv sync --all-extras    # crée le venv, résout et installe tout
 ```
 
-Copier `.env.example` en `.env` et ajuster `GLYPHWELL_DATA_DIR` : le corpus anglais
-complet représente **plusieurs dizaines de Go** décompressés et des centaines de
-milliers de fichiers.
+Copier `.env.example` en `.env` et ajuster `GLYPHWELL_DATA_DIR` : l'archive anglaise
+complète pèse **35,8 Go** pour la release `v2024`.
+
+## Démarrage rapide
+
+Deux commandes suffisent à récupérer le corpus :
+
+```bash
+uv run glyphwell db init                      # crée la base
+uv run glyphwell corpus fetch --language en   # télécharge l'archive OpenSubtitles
+```
+
+`fetch` annonce l'URL et la taille avant d'engager quoi que ce soit, puis affiche le
+volume, le débit et le temps restant :
+
+```
+Archive OPUS : https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/raw/en.zip
+Release v2024, langue en, préprocessing raw — environ 35.8 GB
+Destination : data\corpus
+téléchargement ━━━━━━━━━━━━━━━━━━ 4.2/35.8 GB 18.4 MB/s 0:28:31
+```
+
+Coupé en route ? Relancez la même commande : le téléchargement reprend à l'octet où il
+s'était arrêté. À l'arrivée, l'archive est ouverte et son contenu résumé — sans jamais être
+décompressée :
+
+```
+ Archive              data\corpus\OpenSubtitles_v2024_raw_en.zip
+ Taille               35.8 GB
+ Empreinte            83279cfd5aab4bfcc54654134e35c5846027241b7a72f01774f102a815797d5c
+ Sous-titres          …
+ Fichiers de service  3
+Arborescence interne :
+  OpenSubtitles/raw/en/2022/1596342/1957893755.xml
+  …
+```
+
+Pour valider toute la chaîne en quelques secondes plutôt qu'en quelques heures, essayez
+d'abord sur un petit corpus OPUS :
+
+```bash
+uv run glyphwell corpus fetch --corpus Books --language en --version latest
+```
 
 ## Commandes
 
@@ -40,7 +81,7 @@ uv run glyphwell db vacuum
 
 # Corpus de sous-titres
 uv run glyphwell corpus fetch --language en          # téléchargement OPUS
-uv run glyphwell corpus index                        # scan de l'arborescence -> SQLite
+uv run glyphwell corpus index                        # scan de l'archive -> SQLite
 uv run glyphwell corpus refresh                      # re-hash + invalidation ciblée
 
 # Métadonnées des titres
@@ -60,6 +101,15 @@ Un manifeste YAML, versionnable et hashé — toute modification du fichier cré
 nouvelle recherche au lieu de réutiliser des résultats obsolètes. Voir
 [`searches/example.yaml`](searches/example.yaml), entièrement commenté.
 
+## Documentation
+
+La documentation détaillée vit dans [`doc/`](doc/index.md) :
+
+- [installation.md](doc/installation.md) — `uv`, prérequis, espace disque
+- [configuration.md](doc/configuration.md) — variables `GLYPHWELL_*`, arborescence de `data/`
+- [corpus.md](doc/corpus.md) — l'étape 1 en détail : releases, reprise, arborescence
+  interne de l'archive, traçabilité, dépannage
+
 ## Développement
 
 ```bash
@@ -75,7 +125,10 @@ sont détaillées dans [CLAUDE.md](CLAUDE.md).
 
 ## État
 
-Squelette initialisé : packaging, schéma SQLite, CLI, chargement des manifestes et
-outillage qualité sont opérationnels. La logique métier (téléchargement OPUS, lecture
-XML, import des datasets IMDb, moteur de recherche) est présente sous forme de stubs typés — voir
-la section « Périmètre actuel » de [CLAUDE.md](CLAUDE.md).
+Le squelette est en place — packaging, schéma SQLite, CLI, chargement des manifestes,
+outillage qualité — et **l'étape 1 est opérationnelle** : `glyphwell corpus fetch`
+télécharge, reprend, vérifie et trace l'archive OpenSubtitles.
+
+Le reste de la logique métier (indexation de l'archive, import des datasets IMDb, moteur de
+recherche) est présent sous forme de stubs typés — voir la section « Périmètre actuel » de
+[CLAUDE.md](CLAUDE.md).

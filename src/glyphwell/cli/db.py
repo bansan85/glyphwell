@@ -3,17 +3,16 @@
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from glyphwell.cli.context import get_context
+from glyphwell.console import console
 from glyphwell.db import connect, current_version, initialize
 
 __all__ = ["app"]
 
 app = typer.Typer(help="Création, inspection et entretien de la base SQLite.", no_args_is_help=True)
 
-_console = Console()
 
 # Tables listées par `db status`, dans un ordre qui suit le flux de travail.
 _COUNTED_TABLES = (
@@ -35,7 +34,7 @@ def init(ctx: typer.Context) -> None:
     with connect(path, create=True) as conn:
         version = initialize(conn)
 
-    _console.print(f"Base prête : [bold]{path}[/bold] (schéma version {version})")
+    console.print(f"Base prête : [bold]{path}[/bold] (schéma version {version})")
 
 
 @app.command("status")
@@ -51,15 +50,15 @@ def status(ctx: typer.Context) -> None:
             for table in _COUNTED_TABLES
         }
 
-    _console.print(f"Base : [bold]{path}[/bold]")
-    _console.print(f"Schéma : version {version}")
+    console.print(f"Base : [bold]{path}[/bold]")
+    console.print(f"Schéma : version {version}")
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("Table")
     table.add_column("Lignes", justify="right")
     for name, count in counts.items():
         table.add_row(name, f"{count:,}".replace(",", " "))
-    _console.print(table)
+    console.print(table)
 
 
 @app.command("vacuum")
@@ -82,4 +81,4 @@ def vacuum(
         if analyze:
             conn.execute("ANALYZE")
 
-    _console.print("Base compactée.")
+    console.print("Base compactée.")

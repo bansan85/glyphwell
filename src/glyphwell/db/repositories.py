@@ -4,8 +4,9 @@ Le reste du code ne construit jamais de SQL : il passe par ces dépôts, qui tra
 lignes SQLite en objets valeur. C'est aussi le seul endroit où les invariants de la reprise
 se traduisent en requêtes (``INSERT OR IGNORE``, tri déterministe, transaction par fenêtre).
 
-STATUT : stubs. Les signatures et les objets valeur sont définitifs ; les corps restent à
-écrire (cf. section « Périmètre actuel » de CLAUDE.md).
+STATUT : `CorpusDownloadsRepository` est implémenté ; le reste est encore en stubs, dont
+les signatures et les objets valeur sont définitifs (cf. « Périmètre actuel » de
+CLAUDE.md).
 """
 
 import sqlite3
@@ -13,9 +14,19 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from glyphwell.types import ImdbId, JsonObject, LanguageCode, OpusFileId, OpusVersion, Sha256
+from glyphwell.types import (
+    ImdbId,
+    JsonObject,
+    LanguageCode,
+    OpenSubtitlesFileId,
+    OpusVersion,
+    Sha256,
+)
 
 __all__ = [
+    "CorpusDownloadRow",
+    "CorpusDownloadsRepository",
+    "DownloadStatus",
     "FileStatus",
     "ResultRow",
     "ResultsRepository",
@@ -55,6 +66,17 @@ class FileStatus(StrEnum):
     ERROR = "error"
 
 
+class DownloadStatus(StrEnum):
+    """Cycle de vie d'une acquisition du corpus.
+
+    Il n'y a pas d'état ``extracted`` : l'archive n'est jamais décompressée.
+    """
+
+    PENDING = "pending"
+    DOWNLOADED = "downloaded"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TitleRow:
     """Une ligne de `titles`."""
@@ -80,7 +102,7 @@ class SubtitleFileRow:
     opus_version: OpusVersion
     language: LanguageCode
     imdb_id: ImdbId
-    opus_file_id: OpusFileId
+    opensubtitles_file_id: OpenSubtitlesFileId
     rel_path: str
     year: int | None
     sha256: Sha256 | None
@@ -131,6 +153,26 @@ class ResultRow:
     payload: JsonObject | None
     model: str
     latency_ms: int | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CorpusDownloadRow:
+    """Une ligne de `corpus_downloads` : la traçabilité d'une acquisition.
+
+    `download_id` vaut `None` tant que la ligne n'a pas été écrite, ce qui rend l'objet
+    utilisable aussi bien en insertion qu'en lecture.
+    """
+
+    download_id: int | None = None
+    opus_corpus: str
+    opus_version: OpusVersion
+    language: LanguageCode
+    url: str | None
+    archive_path: str | None
+    sha256: Sha256 | None
+    status: DownloadStatus
+    downloaded_at: str | None = None
+    verified_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,3 +340,111 @@ class ResultsRepository:
     def count(self, run_id: int, *, matched_only: bool = False) -> int:
         """Nombre de résultats d'une recherche."""
         raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusDownloadsRepository:
+    """Traçabilité des téléchargements du corpus.
+
+    Une ligne par ``(corpus, version, langue)``. Elle est écrite en ``pending`` *avant* le
+    transfert : une base absente doit faire échouer ``corpus fetch`` tout de suite, pas
+    après plusieurs dizaines de Go.
+    """
+
+    conn: sqlite3.Connection
+
+    def upsert(self, row: CorpusDownloadRow) -> int:
+        """Insère ou met à jour une acquisition, et renvoie son `download_id`.
+
+        Une empreinte déjà connue n'est jamais effacée par une écriture qui n'en porte pas :
+        `sha256` n'est calculable gratuitement que lors d'un téléchargement complet.
+        """
+        cursor = self.conn.execute(
+            "INSERT INTO corpus_downloads"
+            " (opus_corpus, opus_version, language, url, archive_path, sha256, status)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (opus_corpus, opus_version, language) DO UPDATE SET"
+            "     url = coalesce(excluded.url, corpus_downloads.url),"
+            "     archive_path = coalesce(excluded.archive_path, corpus_downloads.archive_path),"
+            "     sha256 = coalesce(excluded.sha256, corpus_downloads.sha256),"
+            "     status = excluded.status"
+            " RETURNING download_id",
+            (
+                row.opus_corpus,
+                row.opus_version,
+                row.language,
+                row.url,
+                row.archive_path,
+                row.sha256,
+                row.status.value,
+            ),
+        )
+        return int(cursor.fetchone()["download_id"])
+
+    def get(
+        self,
+        *,
+        opus_corpus: str,
+        opus_version: OpusVersion,
+        language: LanguageCode,
+    ) -> CorpusDownloadRow | None:
+        """Retrouve une acquisition par sa clé naturelle."""
+        found = self.conn.execute(
+            "SELECT * FROM corpus_downloads"
+            " WHERE opus_corpus = ? AND opus_version = ? AND language = ?",
+            (opus_corpus, opus_version, language),
+        ).fetchone()
+        return None if found is None else _to_download_row(found)
+
+    def mark(
+        self,
+        download_id: int,
+        status: DownloadStatus,
+        *,
+        sha256: Sha256 | None = None,
+        archive_path: str | None = None,
+        verified: bool = False,
+    ) -> None:
+        """Fait avancer une acquisition.
+
+        Args:
+            download_id: acquisition concernée.
+            status: nouvel état. ``downloaded`` horodate `downloaded_at`.
+            sha256: empreinte, si elle a pu être calculée.
+            archive_path: chemin de l'archive obtenue.
+            verified: l'archive a été ouverte et ses membres comptés.
+        """
+        self.conn.execute(
+            "UPDATE corpus_downloads SET"
+            "     status = ?,"
+            "     sha256 = coalesce(?, sha256),"
+            "     archive_path = coalesce(?, archive_path),"
+            "     downloaded_at = CASE WHEN ? = 'downloaded'"
+            "         THEN datetime('now') ELSE downloaded_at END,"
+            "     verified_at = CASE WHEN ? THEN datetime('now') ELSE verified_at END"
+            " WHERE download_id = ?",
+            (status.value, sha256, archive_path, status.value, int(verified), download_id),
+        )
+
+    def iter_all(self) -> Iterator[CorpusDownloadRow]:
+        """Toutes les acquisitions, de la plus récente à la plus ancienne."""
+        for found in self.conn.execute(
+            "SELECT * FROM corpus_downloads ORDER BY downloaded_at DESC, download_id DESC"
+        ):
+            yield _to_download_row(found)
+
+
+def _to_download_row(row: sqlite3.Row) -> CorpusDownloadRow:
+    """Traduit une ligne de `corpus_downloads`."""
+    return CorpusDownloadRow(
+        download_id=int(row["download_id"]),
+        opus_corpus=str(row["opus_corpus"]),
+        opus_version=str(row["opus_version"]),
+        language=str(row["language"]),
+        url=None if row["url"] is None else str(row["url"]),
+        archive_path=None if row["archive_path"] is None else str(row["archive_path"]),
+        sha256=None if row["sha256"] is None else str(row["sha256"]),
+        status=DownloadStatus(row["status"]),
+        downloaded_at=None if row["downloaded_at"] is None else str(row["downloaded_at"]),
+        verified_at=None if row["verified_at"] is None else str(row["verified_at"]),
+    )

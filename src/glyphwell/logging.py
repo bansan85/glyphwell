@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 from rich.logging import RichHandler
 
+from glyphwell.console import console
+
 if TYPE_CHECKING:
     from glyphwell.config import LogLevel
 
@@ -18,13 +20,19 @@ def setup_logging(level: "LogLevel" = "INFO") -> None:
 
     Idempotent : un second appel remplace le handler au lieu de l'empiler, ce qui évite
     les lignes dupliquées quand la CLI est invoquée depuis un test.
+
+    Le handler écrit sur la `console` partagée du projet, et non sur une instance à lui :
+    c'est ce qui permet à une ligne de journal émise pendant un `Progress` de s'insérer
+    au-dessus de la barre au lieu de la hacher (cf. [console.py](console.py)).
     """
     logger = logging.getLogger(_LOGGER_NAME)
     logger.handlers.clear()
     logger.setLevel(level)
     logger.propagate = False
 
-    handler = RichHandler(rich_tracebacks=True, show_path=False, omit_repeated_times=False)
+    handler = RichHandler(
+        console=console, rich_tracebacks=True, show_path=False, omit_repeated_times=False
+    )
     handler.setFormatter(logging.Formatter("%(message)s", datefmt="[%X]"))
     logger.addHandler(handler)
 
