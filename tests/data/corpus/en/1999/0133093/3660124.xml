@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Échantillon entièrement fabriqué, imitant la structure des fichiers OPUS
+     OpenSubtitles au format `raw` : phrases <s> numérotées, repères temporels <time>.
+     Le chemin reproduit l'arborescence attendue : en/1999/0133093/3660124.xml -->
+<document id="3660124">
+  <s id="1">
+    <time id="T1S" value="00:00:314" />
+    First placeholder line of dialogue.
+  </s>
+  <s id="2">
+    Second placeholder line, same scene.
+    <time id="T1E" value="00:02:118" />
+  </s>
+  <s id="3">
+    <time id="T2S" value="00:04:002" />
+    Third placeholder line, next scene.
+  </s>
+</document>

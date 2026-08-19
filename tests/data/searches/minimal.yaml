@@ -1,0 +1,6 @@
+# Manifeste réduit au strict minimum requis, utilisé par les tests.
+name: minimal
+model: test-model
+prompt:
+  user: |
+    {{ chunk }}

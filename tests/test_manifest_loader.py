@@ -1,0 +1,79 @@
+"""Chargement, validation et hachage des manifestes."""
+
+from pathlib import Path
+
+import pytest
+
+from glyphwell.errors import ManifestError
+from glyphwell.manifest import load, manifest_hash
+from glyphwell.manifest.model import PrefilterMode
+
+
+def test_loads_minimal_manifest(minimal_manifest: Path) -> None:
+    loaded = load(minimal_manifest)
+    assert loaded.name == "minimal"
+    assert loaded.model == "test-model"
+    assert len(loaded.hash) == 64
+
+
+def test_loads_example_manifest(example_manifest: Path) -> None:
+    """Le gabarit livré doit rester valide : c'est la documentation exécutable du format."""
+    loaded = load(example_manifest)
+    assert loaded.manifest.chunk.size == 80
+    assert loaded.manifest.chunk.overlap == 10
+    assert loaded.manifest.prefilter.mode is PrefilterMode.ANY
+    assert loaded.manifest.output.json_schema is not None
+    assert loaded.manifest.match_when == "matched"
+
+
+def test_hash_is_stable_and_line_ending_agnostic() -> None:
+    """Un même manifeste doit donner la même empreinte sous Windows et sous Linux."""
+    source = "name: a\nmodel: m\nprompt:\n  user: x\n"
+    assert manifest_hash(source) == manifest_hash(source.replace("\n", "\r\n"))
+
+
+def test_hash_changes_with_content() -> None:
+    """Modifier le manifeste doit créer un nouveau run, pas réutiliser l'ancien."""
+    base = "name: a\nmodel: m\nprompt:\n  user: x\n"
+    assert manifest_hash(base) != manifest_hash(base.replace("user: x", "user: y"))
+
+
+def test_missing_file_is_reported(tmp_path: Path) -> None:
+    with pytest.raises(ManifestError, match="illisible"):
+        load(tmp_path / "absent.yaml")
+
+
+def test_unknown_key_is_rejected(tmp_path: Path) -> None:
+    """Une clé mal orthographiée ne doit pas devenir un filtre silencieusement ignoré."""
+    path = tmp_path / "typo.yaml"
+    path.write_text("name: a\nmodel: m\nprompt:\n  user: x\nchnk:\n  size: 10\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="invalide"):
+        load(path)
+
+
+def test_overlap_must_be_smaller_than_size(tmp_path: Path) -> None:
+    """Un recouvrement trop grand empêcherait la fenêtre d'avancer : boucle infinie."""
+    path = tmp_path / "bad-chunk.yaml"
+    path.write_text(
+        "name: a\nmodel: m\nprompt:\n  user: x\nchunk:\n  size: 10\n  overlap: 10\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="overlap"):
+        load(path)
+
+
+def test_active_prefilter_requires_patterns(tmp_path: Path) -> None:
+    path = tmp_path / "bad-prefilter.yaml"
+    path.write_text(
+        "name: a\nmodel: m\nprompt:\n  user: x\nprefilter:\n  mode: any\n  patterns: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="motif"):
+        load(path)
+
+
+def test_non_mapping_root_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "list.yaml"
+    path.write_text("- a\n- b\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="objet YAML"):
+        load(path)

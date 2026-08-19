@@ -1,0 +1,130 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "glyphwell"
+version = "0.1.0"
+description = "Télécharge le corpus de sous-titres OpenSubtitles, résout les titres IMDb et lance des recherches pilotées par Ollama."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Vincent Le Garrec" }]
+keywords = ["subtitles", "opensubtitles", "opus", "imdb", "ollama", "llm"]
+classifiers = [
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dependencies = [
+  "httpx>=0.28",
+  "jsonschema>=4.23",
+  "lxml>=5.3",
+  "ollama>=0.4",
+  "opustools>=1.6",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "pyyaml>=6.0",
+  "rich>=13.9",
+  "typer>=0.15",
+]
+
+[project.optional-dependencies]
+dev = [
+  "lxml-stubs>=0.5",
+  "mypy>=1.14",
+  "pre-commit>=4.0",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+  "types-jsonschema>=4.23",
+  "types-pyyaml>=6.0",
+]
+
+[project.scripts]
+glyphwell = "glyphwell.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/glyphwell"]
+
+# ---------------------------------------------------------------------------
+# ruff : lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "I", "N", "UP", "B", "SIM", "C4", "PTH", "RET", "ARG", "TC", "ANN", "RUF",
+]
+ignore = [
+  "ANN401", # `Any` est déjà interdit par mypy (disallow_any_explicit)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Les commandes Typer déclarent leurs options via des valeurs par défaut appelées.
+"src/glyphwell/cli/*.py" = ["B008"]
+# Les tests peuvent utiliser des assertions et des fixtures non consommées.
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.ruff.lint.flake8-type-checking]
+# Ces classes et décorateurs évaluent leurs annotations à l'exécution : leurs imports
+# ne doivent jamais être déplacés dans un bloc `if TYPE_CHECKING`.
+runtime-evaluated-base-classes = [
+  "pydantic.BaseModel",
+  "pydantic_settings.BaseSettings",
+]
+runtime-evaluated-decorators = [
+  "dataclasses.dataclass",
+  "pydantic.dataclasses.dataclass",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# mypy : mode très strict
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+mypy_path = "stubs"
+strict = true
+warn_unreachable = true
+warn_unused_configs = true
+disallow_any_explicit = true
+disallow_any_unimported = true
+disallow_any_decorated = true
+enable_error_code = [
+  "ignore-without-code",
+  "redundant-expr",
+  "truthy-bool",
+  "truthy-iterable",
+  "possibly-undefined",
+  "redundant-self",
+  "unused-awaitable",
+  "explicit-override",
+  "mutable-override",
+  "narrowed-type-not-subtype",
+  "deprecated",
+]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["src/glyphwell"]
+branch = true
