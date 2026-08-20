@@ -29,9 +29,9 @@ downloading ━━━━━━━━━━━━━━━━━━━━━ 11.4
  Subtitles            42
  Service files        3
 Internal layout:
-  Books/raw/en/Hugo_Victor-Notre_Dame_de_Paris.xml
-  Books/raw/en/Doyle_Arthur_Conan-Sign_of_Four.xml
-  Books/raw/en/Zola_Emile-Germinal.xml
+  OpenSubtitles/raw/en/1000/14250988_11617414_3_1/1957517352.xml
+  OpenSubtitles/raw/en/1029/16288570_4131818_2_6/1957459444.xml
+  OpenSubtitles/raw/en/1029/16288570_4131818_2_6/1957459443.xml
 ```
 
 The `OpenSubtitles` corpus adds two levels to this layout, the year and the IMDb
