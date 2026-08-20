@@ -42,7 +42,12 @@ uv run ruff check . && uv run ruff format .
 uv run mypy                    # `files` is fixed in pyproject: src + tests
 ```
 
-## 4. Style and typing
+## 4. Commit messages
+
+Standard Git convention: subject line **50 characters or less**, body lines wrapped at
+**70 characters**, blank line between the two.
+
+## 5. Style and typing
 
 Modern Python 3.12:
 
@@ -102,7 +107,7 @@ Four pitfalls hit already, not to be reintroduced:
   the smallest log line emitted during a download gets written right over the progress bar.
   `RichHandler()` with no argument grabs Rich's global console — that's exactly the trap.
 
-## 5. Data sources and their pitfalls
+## 6. Data sources and their pitfalls
 
 ### OPUS OpenSubtitles corpus (`opustools`)
 
@@ -185,7 +190,7 @@ thousand members. It is not extracted: plan for its size, not double that.
 `GLYPHWELL_DATA_DIR` must point to a disk with enough room. `data/` is gitignored and
 fully reconstructible.
 
-## 6. Resume invariants
+## 7. Resume invariants
 
 This is the core of the program's correctness. Any change to
 [search/](src/glyphwell/search/) must preserve these.
@@ -211,7 +216,7 @@ This is the core of the program's correctness. Any change to
 8. **Clean shutdown.** A SIGINT finishes the current chunk, commits, and marks the run
    `paused` — it never leaves a file `in_progress` without a consistent cursor.
 
-## 7. Data model
+## 8. Data model
 
 SQLite, **without FTS5**: subtitle text is neither copied nor indexed in the database —
 only the catalog and progress state live there. Schema declared in
@@ -227,7 +232,7 @@ only the catalog and progress state live there. Schema declared in
 | `corpus_downloads` | Traceability of OPUS downloads. |
 | `imports` | Traceability of IMDb dataset imports. |
 
-## 8. Current scope
+## 9. Current scope
 
 The skeleton is in place, and **step 1 is operational**.
 
