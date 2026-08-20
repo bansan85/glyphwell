@@ -1,8 +1,8 @@
-"""État partagé entre les sous-commandes.
+"""State shared between subcommands.
 
-Module séparé à dessein : les modules de sous-commandes ont besoin de `get_context`, et
-`glyphwell.cli` a besoin de leurs `Typer`. Passer par un troisième module évite le cycle
-d'imports que produirait un accès direct au paquet.
+Deliberately a separate module: subcommand modules need `get_context`, and
+`glyphwell.cli` needs their `Typer`. Going through a third module avoids the import
+cycle that direct access to the package would produce.
 """
 
 from dataclasses import dataclass
@@ -16,16 +16,16 @@ __all__ = ["AppContext", "get_context"]
 
 @dataclass(frozen=True, slots=True)
 class AppContext:
-    """Ce que le callback racine dépose dans ``ctx.obj``."""
+    """What the root callback stores in ``ctx.obj``."""
 
     settings: Settings
 
 
 def get_context(ctx: typer.Context) -> AppContext:
-    """Récupère le contexte applicatif, en le construisant si Typer ne l'a pas fait.
+    """Retrieves the application context, building it if Typer has not.
 
-    Le repli couvre l'invocation directe d'une sous-commande depuis un test, où le callback
-    racine n'a pas été traversé.
+    The fallback covers a subcommand invoked directly from a test, where the root
+    callback has not run.
     """
     obj = ctx.obj
     if isinstance(obj, AppContext):

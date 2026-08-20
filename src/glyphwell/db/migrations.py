@@ -1,8 +1,8 @@
-"""Création et versionnement du schéma.
+"""Schema creation and versioning.
 
-La version vit dans ``PRAGMA user_version``, ce qui évite une table de migration
-supplémentaire. Le schéma initial est déclaré une fois pour toutes dans ``schema.sql`` ;
-les évolutions ultérieures s'ajoutent à `_MIGRATIONS` sous forme d'étapes numérotées.
+The version lives in ``PRAGMA user_version``, which avoids an extra migration table.
+The initial schema is declared once and for all in ``schema.sql``; later changes are
+added to `_MIGRATIONS` as numbered steps.
 """
 
 import sqlite3
@@ -18,50 +18,50 @@ __all__ = ["SCHEMA_VERSION", "current_version", "ensure_current", "initialize", 
 _log = get_logger(__name__)
 
 SCHEMA_VERSION: Final = 1
-"""Version de schéma attendue par ce code."""
+"""Schema version expected by this code."""
 
-# Étapes de migration à appliquer pour passer de la version N-1 à la version N.
-# La version 1 est produite par `schema.sql` et n'apparaît donc pas ici.
+# Migration steps to apply to go from version N-1 to version N.
+# Version 1 is produced by `schema.sql` and therefore does not appear here.
 _MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
 
 
 def schema_sql() -> str:
-    """Renvoie le contenu de ``schema.sql``, embarqué dans le paquet."""
+    """Returns the contents of ``schema.sql``, bundled with the package."""
     return resources.files("glyphwell.db").joinpath("schema.sql").read_text(encoding="utf-8")
 
 
 def current_version(conn: sqlite3.Connection) -> int:
-    """Version de schéma portée par la base. 0 pour une base vierge."""
+    """Schema version carried by the database. 0 for a fresh database."""
     row = conn.execute("PRAGMA user_version").fetchone()
     if row is None:
         return 0
     version = row[0]
     if not isinstance(version, int):
-        message = f"user_version inattendu : {version!r}"
+        message = f"unexpected user_version: {version!r}"
         raise DatabaseError(message)
     return version
 
 
 def initialize(conn: sqlite3.Connection) -> int:
-    """Crée ou met à niveau le schéma, puis renvoie la version atteinte.
+    """Creates or upgrades the schema, then returns the version reached.
 
-    Sans effet si la base est déjà à jour : ``schema.sql`` n'utilise que des
-    ``CREATE ... IF NOT EXISTS``, et les migrations sont appliquées une seule fois.
+    No-op if the database is already up to date: ``schema.sql`` only uses
+    ``CREATE ... IF NOT EXISTS``, and migrations are applied only once.
 
     Raises:
-        DatabaseError: la base est plus récente que ce que ce code sait lire.
+        DatabaseError: the database is newer than what this code knows how to read.
     """
     version = current_version(conn)
 
     if version > SCHEMA_VERSION:
         message = (
-            f"la base est en version {version}, ce code n'en gère que {SCHEMA_VERSION}. "
-            "Mettre glyphwell à jour."
+            f"the database is at version {version}, this code only handles {SCHEMA_VERSION}. "
+            "Update glyphwell."
         )
         raise DatabaseError(message)
 
     if version == 0:
-        _log.info("création du schéma (version %d)", SCHEMA_VERSION)
+        _log.info("creating schema (version %d)", SCHEMA_VERSION)
         conn.executescript(schema_sql())
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return SCHEMA_VERSION
@@ -69,7 +69,7 @@ def initialize(conn: sqlite3.Connection) -> int:
     for target in range(version + 1, SCHEMA_VERSION + 1):
         statements = _MIGRATIONS.get(target)
         if statements is None:
-            message = f"migration manquante vers la version {target}"
+            message = f"missing migration to version {target}"
             raise DatabaseError(message)
         _log.info("migration %d -> %d", target - 1, target)
         conn.execute("BEGIN")
@@ -82,18 +82,18 @@ def initialize(conn: sqlite3.Connection) -> int:
 
 
 def ensure_current(conn: sqlite3.Connection) -> None:
-    """Vérifie que la base est exactement à `SCHEMA_VERSION`, sans rien modifier.
+    """Checks that the database is exactly at `SCHEMA_VERSION`, without modifying anything.
 
-    À appeler au début des commandes qui supposent un schéma en place, pour échouer avec un
-    message utile plutôt que sur une table absente.
+    Call this at the start of commands that assume a schema is in place, to fail with a
+    useful message rather than on a missing table.
 
     Raises:
-        SchemaVersionError: version différente de celle attendue.
+        SchemaVersionError: version differs from the one expected.
     """
     version = current_version(conn)
     if version != SCHEMA_VERSION:
         message = (
-            f"version de schéma {version}, attendu {SCHEMA_VERSION}. "
-            "Lancer `glyphwell db init` pour créer ou mettre à niveau la base."
+            f"schema version {version}, expected {SCHEMA_VERSION}. "
+            "Run `glyphwell db init` to create or upgrade the database."
         )
         raise SchemaVersionError(message)

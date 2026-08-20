@@ -1,10 +1,10 @@
-"""Rendu des gabarits de prompt du manifeste.
+"""Rendering of the manifest's prompt templates.
 
-Substitution volontairement minimale — ``{{ nom }}`` remplacé par sa valeur — sans moteur de
-template complet : un manifeste ne doit pas pouvoir exécuter de code, et une syntaxe réduite
-reste lisible dans un YAML.
+Deliberately minimal substitution — ``{{ name }}`` replaced by its value — without a full
+template engine: a manifest must not be able to execute code, and a reduced syntax stays
+readable in a YAML file.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 from dataclasses import dataclass
@@ -28,12 +28,12 @@ PLACEHOLDERS: Final = (
     "last_id",
     "chunk",
 )
-"""Substitutions reconnues dans ``prompt.system`` et ``prompt.user``."""
+"""Substitutions recognized in ``prompt.system`` and ``prompt.user``."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PromptContext:
-    """Valeurs injectées dans un gabarit pour une fenêtre donnée."""
+    """Values injected into a template for a given chunk."""
 
     title: str
     year: int | None
@@ -43,35 +43,35 @@ class PromptContext:
     chunk: str
 
     def as_mapping(self) -> "Mapping[str, str]":
-        """Convertit le contexte en substitutions textuelles.
+        """Converts the context into textual substitutions.
 
-        Les valeurs absentes deviennent une chaîne vide : un prompt ne doit pas contenir le
-        mot ``None``.
+        Missing values become an empty string: a prompt must not contain the word
+        ``None``.
         """
         raise NotImplementedError
 
 
 def render_context(*, chunk: "Chunk", title: "Title | None", imdb_id: ImdbId) -> PromptContext:
-    """Assemble le contexte d'une fenêtre.
+    """Assembles the context for a chunk.
 
-    `title` peut être `None` quand les datasets IMDb ne connaissent pas l'identifiant : le
-    libellé retombe alors sur l'identifiant lui-même, et la recherche continue.
+    `title` can be `None` when the IMDb datasets do not know the identifier: the label
+    then falls back to the identifier itself, and the search continues.
     """
     raise NotImplementedError
 
 
 def render(template: str, context: PromptContext) -> str:
-    """Substitue les ``{{ placeholders }}`` d'un gabarit.
+    """Substitutes the ``{{ placeholders }}`` of a template.
 
     Args:
-        template: gabarit issu du manifeste.
-        context: valeurs de la fenêtre courante.
+        template: template taken from the manifest.
+        context: values for the current chunk.
 
     Returns:
-        Le prompt prêt à être envoyé.
+        The prompt ready to be sent.
 
     Raises:
-        ManifestError: le gabarit référence un placeholder inconnu — mieux vaut le signaler
-            que d'envoyer un prompt tronqué à des milliers de fenêtres.
+        ManifestError: the template references an unknown placeholder — better to report
+            it than to send a truncated prompt to thousands of chunks.
     """
     raise NotImplementedError

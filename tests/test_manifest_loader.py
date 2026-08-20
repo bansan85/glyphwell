@@ -1,4 +1,4 @@
-"""Chargement, validation et hachage des manifestes."""
+"""Loading, validation and hashing of manifests."""
 
 from pathlib import Path
 
@@ -17,7 +17,7 @@ def test_loads_minimal_manifest(minimal_manifest: Path) -> None:
 
 
 def test_loads_example_manifest(example_manifest: Path) -> None:
-    """Le gabarit livré doit rester valide : c'est la documentation exécutable du format."""
+    """The shipped template must stay valid: it is the executable documentation of the format."""
     loaded = load(example_manifest)
     assert loaded.manifest.chunk.size == 80
     assert loaded.manifest.chunk.overlap == 10
@@ -27,32 +27,32 @@ def test_loads_example_manifest(example_manifest: Path) -> None:
 
 
 def test_hash_is_stable_and_line_ending_agnostic() -> None:
-    """Un même manifeste doit donner la même empreinte sous Windows et sous Linux."""
+    """The same manifest must give the same checksum on Windows and on Linux."""
     source = "name: a\nmodel: m\nprompt:\n  user: x\n"
     assert manifest_hash(source) == manifest_hash(source.replace("\n", "\r\n"))
 
 
 def test_hash_changes_with_content() -> None:
-    """Modifier le manifeste doit créer un nouveau run, pas réutiliser l'ancien."""
+    """Editing the manifest must create a new run, not reuse the old one."""
     base = "name: a\nmodel: m\nprompt:\n  user: x\n"
     assert manifest_hash(base) != manifest_hash(base.replace("user: x", "user: y"))
 
 
 def test_missing_file_is_reported(tmp_path: Path) -> None:
-    with pytest.raises(ManifestError, match="illisible"):
+    with pytest.raises(ManifestError, match="unreadable"):
         load(tmp_path / "absent.yaml")
 
 
 def test_unknown_key_is_rejected(tmp_path: Path) -> None:
-    """Une clé mal orthographiée ne doit pas devenir un filtre silencieusement ignoré."""
+    """A misspelled key must not turn into a filter that is silently ignored."""
     path = tmp_path / "typo.yaml"
     path.write_text("name: a\nmodel: m\nprompt:\n  user: x\nchnk:\n  size: 10\n", encoding="utf-8")
-    with pytest.raises(ManifestError, match="invalide"):
+    with pytest.raises(ManifestError, match="invalid"):
         load(path)
 
 
 def test_overlap_must_be_smaller_than_size(tmp_path: Path) -> None:
-    """Un recouvrement trop grand empêcherait la fenêtre d'avancer : boucle infinie."""
+    """An overlap that is too large would prevent the chunk from advancing: infinite loop."""
     path = tmp_path / "bad-chunk.yaml"
     path.write_text(
         "name: a\nmodel: m\nprompt:\n  user: x\nchunk:\n  size: 10\n  overlap: 10\n",
@@ -68,12 +68,12 @@ def test_active_prefilter_requires_patterns(tmp_path: Path) -> None:
         "name: a\nmodel: m\nprompt:\n  user: x\nprefilter:\n  mode: any\n  patterns: []\n",
         encoding="utf-8",
     )
-    with pytest.raises(ManifestError, match="motif"):
+    with pytest.raises(ManifestError, match="pattern"):
         load(path)
 
 
 def test_non_mapping_root_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "list.yaml"
     path.write_text("- a\n- b\n", encoding="utf-8")
-    with pytest.raises(ManifestError, match="objet YAML"):
+    with pytest.raises(ManifestError, match="YAML mapping"):
         load(path)

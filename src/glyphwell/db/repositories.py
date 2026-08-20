@@ -1,12 +1,12 @@
-"""Accès typé aux tables.
+"""Typed access to tables.
 
-Le reste du code ne construit jamais de SQL : il passe par ces dépôts, qui traduisent les
-lignes SQLite en objets valeur. C'est aussi le seul endroit où les invariants de la reprise
-se traduisent en requêtes (``INSERT OR IGNORE``, tri déterministe, transaction par fenêtre).
+The rest of the code never builds SQL directly: it goes through these repositories, which
+translate SQLite rows into value objects. This is also the only place where the resume
+invariants translate into queries (``INSERT OR IGNORE``, deterministic ordering, one
+transaction per chunk).
 
-STATUT : `CorpusDownloadsRepository` est implémenté ; le reste est encore en stubs, dont
-les signatures et les objets valeur sont définitifs (cf. « Périmètre actuel » de
-CLAUDE.md).
+STATUS: `CorpusDownloadsRepository` is implemented; the rest is still stubs, whose
+signatures and value objects are final (see "Current scope" in CLAUDE.md).
 """
 
 import sqlite3
@@ -43,7 +43,7 @@ __all__ = [
 
 
 class RunStatus(StrEnum):
-    """Cycle de vie d'une recherche."""
+    """Life cycle of a search."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -53,10 +53,10 @@ class RunStatus(StrEnum):
 
 
 class FileStatus(StrEnum):
-    """Cycle de vie d'un fichier au sein d'une recherche.
+    """Life cycle of a file within a search.
 
-    ``IN_PROGRESS`` est un état légitime après une interruption : le curseur
-    (`RunFileRow.last_sentence_index`) reste cohérent et la reprise repart de là.
+    ``IN_PROGRESS`` is a legitimate state after an interruption: the cursor
+    (`RunFileRow.last_sentence_index`) stays consistent and resuming picks up from there.
     """
 
     PENDING = "pending"
@@ -67,9 +67,9 @@ class FileStatus(StrEnum):
 
 
 class DownloadStatus(StrEnum):
-    """Cycle de vie d'une acquisition du corpus.
+    """Life cycle of a corpus acquisition.
 
-    Il n'y a pas d'état ``extracted`` : l'archive n'est jamais décompressée.
+    There is no ``extracted`` state: the archive is never decompressed.
     """
 
     PENDING = "pending"
@@ -79,7 +79,7 @@ class DownloadStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TitleRow:
-    """Une ligne de `titles`."""
+    """A row of `titles`."""
 
     imdb_id: ImdbId
     title_type: str | None
@@ -96,7 +96,7 @@ class TitleRow:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SubtitleFileRow:
-    """Une ligne de `subtitle_files`."""
+    """A row of `subtitle_files`."""
 
     file_id: int
     opus_version: OpusVersion
@@ -112,7 +112,7 @@ class SubtitleFileRow:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RunRow:
-    """Une ligne de `runs`."""
+    """A row of `runs`."""
 
     run_id: int
     manifest_path: str
@@ -123,10 +123,9 @@ class RunRow:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RunFileRow:
-    """Une ligne de `run_files` : état d'un fichier dans une recherche.
+    """A row of `run_files`: state of a file within a search.
 
-    `last_sentence_index` est le curseur de reprise ; `None` signifie « pas encore
-    commencé ».
+    `last_sentence_index` is the resume cursor; `None` means "not started yet".
     """
 
     run_id: int
@@ -141,7 +140,7 @@ class RunFileRow:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ResultRow:
-    """Une ligne de `results` : la réponse du modèle pour une fenêtre."""
+    """A row of `results`: the model's response for a chunk."""
 
     result_id: int
     run_id: int
@@ -157,10 +156,10 @@ class ResultRow:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CorpusDownloadRow:
-    """Une ligne de `corpus_downloads` : la traçabilité d'une acquisition.
+    """A row of `corpus_downloads`: traceability of an acquisition.
 
-    `download_id` vaut `None` tant que la ligne n'a pas été écrite, ce qui rend l'objet
-    utilisable aussi bien en insertion qu'en lecture.
+    `download_id` is `None` until the row has been written, which makes the object usable
+    both for insertion and for reading.
     """
 
     download_id: int | None = None
@@ -177,31 +176,31 @@ class CorpusDownloadRow:
 
 @dataclass(frozen=True, slots=True)
 class TitlesRepository:
-    """Lecture et écriture de `titles`."""
+    """Reading and writing `titles`."""
 
     conn: sqlite3.Connection
 
     def get(self, imdb_id: ImdbId) -> TitleRow | None:
-        """Renvoie le titre, ou `None` s'il n'a pas été importé."""
+        """Returns the title, or `None` if it has not been imported."""
         raise NotImplementedError
 
     def upsert_many(self, rows: Sequence[TitleRow]) -> int:
-        """Insère ou met à jour un lot de titres, et renvoie le nombre de lignes écrites."""
+        """Inserts or updates a batch of titles, and returns the number of rows written."""
         raise NotImplementedError
 
     def count(self) -> int:
-        """Nombre de titres connus."""
+        """Number of known titles."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class SubtitleFilesRepository:
-    """Catalogue des fichiers du corpus."""
+    """Catalog of corpus files."""
 
     conn: sqlite3.Connection
 
     def upsert(self, row: SubtitleFileRow) -> int:
-        """Insère ou met à jour un fichier, et renvoie son `file_id`."""
+        """Inserts or updates a file, and returns its `file_id`."""
         raise NotImplementedError
 
     def get_by_path(
@@ -211,25 +210,25 @@ class SubtitleFilesRepository:
         language: LanguageCode,
         rel_path: str,
     ) -> SubtitleFileRow | None:
-        """Retrouve un fichier par sa clé naturelle."""
+        """Finds a file by its natural key."""
         raise NotImplementedError
 
     def set_hash(self, file_id: int, sha256: Sha256, *, size_bytes: int) -> None:
-        """Enregistre l'empreinte d'un fichier."""
+        """Records a file's checksum."""
         raise NotImplementedError
 
     def iter_stale(self) -> Iterator[SubtitleFileRow]:
-        """Fichiers dont l'empreinte est absente ou périmée, à re-hacher."""
+        """Files whose checksum is missing or stale, to be rehashed."""
         raise NotImplementedError
 
     def count(self) -> int:
-        """Nombre de fichiers catalogués."""
+        """Number of cataloged files."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class RunsRepository:
-    """Cycle de vie des recherches."""
+    """Life cycle of searches."""
 
     conn: sqlite3.Connection
 
@@ -241,123 +240,123 @@ class RunsRepository:
         manifest_snapshot: str,
         model: str,
     ) -> int:
-        """Crée une recherche et renvoie son `run_id`."""
+        """Creates a search and returns its `run_id`."""
         raise NotImplementedError
 
     def get(self, run_id: int) -> RunRow | None:
-        """Renvoie une recherche, ou `None`."""
+        """Returns a search, or `None`."""
         raise NotImplementedError
 
     def find_by_hash(self, manifest_hash: Sha256) -> Sequence[RunRow]:
-        """Recherches déjà lancées pour ce manifeste, du plus récent au plus ancien."""
+        """Searches already launched for this manifest, most recent first."""
         raise NotImplementedError
 
     def set_status(self, run_id: int, status: RunStatus) -> None:
-        """Change le statut d'une recherche."""
+        """Changes the status of a search."""
         raise NotImplementedError
 
     def list_all(self) -> Sequence[RunRow]:
-        """Toutes les recherches, du plus récent au plus ancien."""
+        """All searches, most recent first."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class RunFilesRepository:
-    """File de travail et curseurs de reprise."""
+    """Work queue and resume cursors."""
 
     conn: sqlite3.Connection
 
     def enqueue_many(self, run_id: int, file_ids: Sequence[int]) -> int:
-        """Ajoute des fichiers à la file, sans écraser ceux déjà présents.
+        """Adds files to the queue, without overwriting those already present.
 
-        Idempotent : réutilisable pour compléter la file d'un run existant quand de
-        nouveaux fichiers apparaissent dans le corpus.
+        Idempotent: reusable to complete the queue of an existing run when new files
+        appear in the corpus.
         """
         raise NotImplementedError
 
     def iter_pending(self, run_id: int) -> Iterator[RunFileRow]:
-        """Fichiers non terminés, dans l'ordre déterministe ``ORDER BY rel_path``.
+        """Unfinished files, in the deterministic ``ORDER BY rel_path`` order.
 
-        L'ordre est ce qui rend `chunk_index` stable entre deux exécutions : sans lui, une
-        reprise ne désignerait pas les mêmes fenêtres.
+        This ordering is what makes `chunk_index` stable across runs: without it, resuming
+        would not point to the same chunks.
         """
         raise NotImplementedError
 
     def get(self, run_id: int, file_id: int) -> RunFileRow | None:
-        """État d'un fichier dans une recherche."""
+        """State of a file within a search."""
         raise NotImplementedError
 
     def mark_started(self, run_id: int, file_id: int) -> None:
-        """Passe un fichier en `IN_PROGRESS`."""
+        """Sets a file to `IN_PROGRESS`."""
         raise NotImplementedError
 
     def mark_done(self, run_id: int, file_id: int) -> None:
-        """Passe un fichier en `DONE`."""
+        """Sets a file to `DONE`."""
         raise NotImplementedError
 
     def mark_error(self, run_id: int, file_id: int, error: str) -> None:
-        """Passe un fichier en `ERROR` en conservant son curseur, pour permettre la reprise."""
+        """Sets a file to `ERROR` while keeping its cursor, so resuming stays possible."""
         raise NotImplementedError
 
     def reset(self, file_id: int) -> int:
-        """Remet un fichier à `PENDING` dans toutes les recherches et efface son curseur.
+        """Resets a file to `PENDING` across all searches and clears its cursor.
 
-        Appelé quand l'empreinte du fichier a changé. Ne touche qu'à ce fichier : le reste
-        de chaque recherche est conservé.
+        Called when the file's checksum has changed. Only touches this file: the rest of
+        each search is preserved.
         """
         raise NotImplementedError
 
     def progress(self, run_id: int) -> dict[FileStatus, int]:
-        """Compte les fichiers par statut, pour ``search status``."""
+        """Counts files by status, for ``search status``."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class ResultsRepository:
-    """Résultats produits par le modèle."""
+    """Results produced by the model."""
 
     conn: sqlite3.Connection
 
     def insert_ignore(self, row: ResultRow) -> bool:
-        """Insère un résultat, sans effet s'il existe déjà.
+        """Inserts a result, with no effect if it already exists.
 
-        Renvoie vrai si une ligne a été écrite. Le doublon n'est pas une erreur : c'est le
-        cas normal quand une fenêtre est rejouée après une interruption.
+        Returns true if a row was written. A duplicate is not an error: it is the normal
+        case when a chunk is replayed after an interruption.
         """
         raise NotImplementedError
 
     def delete_for_file(self, file_id: int) -> int:
-        """Supprime tous les résultats d'un fichier, toutes recherches confondues.
+        """Deletes all results for a file, across every search.
 
-        Utilisé à l'invalidation quand le sous-titre a changé de contenu.
+        Used for invalidation when the subtitle's content has changed.
         """
         raise NotImplementedError
 
     def iter_matches(self, run_id: int) -> Iterator[ResultRow]:
-        """Résultats positifs d'une recherche, pour l'export."""
+        """Positive results of a search, for export."""
         raise NotImplementedError
 
     def count(self, run_id: int, *, matched_only: bool = False) -> int:
-        """Nombre de résultats d'une recherche."""
+        """Number of results of a search."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class CorpusDownloadsRepository:
-    """Traçabilité des téléchargements du corpus.
+    """Traceability of corpus downloads.
 
-    Une ligne par ``(corpus, version, langue)``. Elle est écrite en ``pending`` *avant* le
-    transfert : une base absente doit faire échouer ``corpus fetch`` tout de suite, pas
-    après plusieurs dizaines de Go.
+    One row per ``(corpus, version, language)``. It is written as ``pending`` *before* the
+    transfer: a missing database should make ``corpus fetch`` fail right away, not after
+    several dozen GB.
     """
 
     conn: sqlite3.Connection
 
     def upsert(self, row: CorpusDownloadRow) -> int:
-        """Insère ou met à jour une acquisition, et renvoie son `download_id`.
+        """Inserts or updates an acquisition, and returns its `download_id`.
 
-        Une empreinte déjà connue n'est jamais effacée par une écriture qui n'en porte pas :
-        `sha256` n'est calculable gratuitement que lors d'un téléchargement complet.
+        A checksum that is already known is never erased by a write that does not carry
+        one: `sha256` can only be computed for free during a complete download.
         """
         cursor = self.conn.execute(
             "INSERT INTO corpus_downloads"
@@ -388,7 +387,7 @@ class CorpusDownloadsRepository:
         opus_version: OpusVersion,
         language: LanguageCode,
     ) -> CorpusDownloadRow | None:
-        """Retrouve une acquisition par sa clé naturelle."""
+        """Finds an acquisition by its natural key."""
         found = self.conn.execute(
             "SELECT * FROM corpus_downloads"
             " WHERE opus_corpus = ? AND opus_version = ? AND language = ?",
@@ -405,14 +404,14 @@ class CorpusDownloadsRepository:
         archive_path: str | None = None,
         verified: bool = False,
     ) -> None:
-        """Fait avancer une acquisition.
+        """Advances an acquisition.
 
         Args:
-            download_id: acquisition concernée.
-            status: nouvel état. ``downloaded`` horodate `downloaded_at`.
-            sha256: empreinte, si elle a pu être calculée.
-            archive_path: chemin de l'archive obtenue.
-            verified: l'archive a été ouverte et ses membres comptés.
+            download_id: acquisition concerned.
+            status: new state. ``downloaded`` timestamps `downloaded_at`.
+            sha256: checksum, if it could be computed.
+            archive_path: path of the archive obtained.
+            verified: the archive has been opened and its members counted.
         """
         self.conn.execute(
             "UPDATE corpus_downloads SET"
@@ -427,7 +426,7 @@ class CorpusDownloadsRepository:
         )
 
     def iter_all(self) -> Iterator[CorpusDownloadRow]:
-        """Toutes les acquisitions, de la plus récente à la plus ancienne."""
+        """All acquisitions, from most recent to oldest."""
         for found in self.conn.execute(
             "SELECT * FROM corpus_downloads ORDER BY downloaded_at DESC, download_id DESC"
         ):
@@ -435,7 +434,7 @@ class CorpusDownloadsRepository:
 
 
 def _to_download_row(row: sqlite3.Row) -> CorpusDownloadRow:
-    """Traduit une ligne de `corpus_downloads`."""
+    """Translates a row of `corpus_downloads`."""
     return CorpusDownloadRow(
         download_id=int(row["download_id"]),
         opus_corpus=str(row["opus_corpus"]),

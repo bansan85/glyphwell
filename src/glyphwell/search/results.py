@@ -1,9 +1,10 @@
-"""Validation des réponses du modèle et export des résultats.
+"""Validation of model responses and export of results.
 
-La contrainte de schéma envoyée à Ollama réduit les écarts mais ne les élimine pas : la
-réponse est donc revérifiée ici contre le JSON Schema du manifeste avant d'être écrite.
+The schema constraint sent to Ollama reduces deviations but does not eliminate them: the
+response is therefore re-checked here against the manifest's JSON Schema before being
+written.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ __all__ = ["ExportFormat", "ValidatedOutput", "export_run", "validate_output"]
 
 
 class ExportFormat(StrEnum):
-    """Formats d'export disponibles."""
+    """Available export formats."""
 
     JSONL = "jsonl"
     CSV = "csv"
@@ -32,12 +33,12 @@ class ExportFormat(StrEnum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ValidatedOutput:
-    """Réponse du modèle après vérification.
+    """Model response after verification.
 
     Attributes:
-        payload: objet JSON conforme au schéma, ou `None` en sortie texte.
-        matched: valeur du champ désigné par ``match_when``. Vrai par défaut quand le
-            manifeste n'en désigne aucun.
+        payload: JSON object conforming to the schema, or `None` for text output.
+        matched: value of the field designated by ``match_when``. True by default when
+            the manifest designates none.
     """
 
     payload: JsonObject | None
@@ -45,19 +46,19 @@ class ValidatedOutput:
 
 
 def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None) -> ValidatedOutput:
-    """Décode et valide la réponse brute du modèle.
+    """Decodes and validates the model's raw response.
 
     Args:
-        raw: texte renvoyé par le modèle.
-        output: configuration de sortie du manifeste.
-        match_when: nom du champ booléen déterminant la correspondance.
+        raw: text returned by the model.
+        output: manifest output configuration.
+        match_when: name of the boolean field determining the match.
 
     Returns:
-        La réponse validée.
+        The validated response.
 
     Raises:
-        ModelOutputError: JSON illisible, non conforme au schéma, ou champ `match_when`
-            absent ou non booléen.
+        ModelOutputError: unreadable JSON, non-conforming to the schema, or `match_when`
+            field missing or not boolean.
     """
     raise NotImplementedError
 
@@ -71,27 +72,26 @@ def export_run(
     titles: "TitleProvider | None" = None,
     matched_only: bool = True,
 ) -> int:
-    """Écrit les résultats d'une recherche dans un fichier et renvoie le nombre de lignes.
+    """Writes a search's results to a file and returns the number of lines.
 
-    Les titres sont résolus au moment de l'export, pas stockés dans `results` : un
-    ré-import des datasets IMDb améliore ainsi les exports suivants sans retoucher les
-    résultats.
+    Titles are resolved at export time, not stored in `results`: a re-import of the IMDb
+    datasets thus improves subsequent exports without touching the results.
 
     Args:
-        conn: connexion à la base.
-        run_id: recherche à exporter.
-        dest: fichier de sortie.
-        export_format: format d'écriture.
-        titles: source de titres, pour enrichir chaque ligne.
-        matched_only: n'exporter que les correspondances.
+        conn: database connection.
+        run_id: search to export.
+        dest: output file.
+        export_format: write format.
+        titles: source of titles, to enrich each line.
+        matched_only: export matches only.
 
     Raises:
-        SearchError: recherche inconnue.
-        OSError: écriture impossible.
+        SearchError: unknown search.
+        OSError: write failed.
     """
     raise NotImplementedError
 
 
 def summary(conn: "sqlite3.Connection", run_id: int) -> "Mapping[str, int]":
-    """Compteurs d'une recherche, pour ``search status``."""
+    """Counters for a search, for ``search status``."""
     raise NotImplementedError

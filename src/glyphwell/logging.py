@@ -1,4 +1,4 @@
-"""Journalisation : `logging` standard, rendu par Rich."""
+"""Logging: standard `logging`, rendered by Rich."""
 
 import logging
 from typing import TYPE_CHECKING
@@ -16,14 +16,14 @@ _LOGGER_NAME = "glyphwell"
 
 
 def setup_logging(level: "LogLevel" = "INFO") -> None:
-    """Installe un unique handler Rich sur le logger racine du projet.
+    """Installs a single Rich handler on the project's root logger.
 
-    Idempotent : un second appel remplace le handler au lieu de l'empiler, ce qui évite
-    les lignes dupliquées quand la CLI est invoquée depuis un test.
+    Idempotent: a second call replaces the handler instead of stacking it, which avoids
+    duplicated lines when the CLI is invoked from within a test.
 
-    Le handler écrit sur la `console` partagée du projet, et non sur une instance à lui :
-    c'est ce qui permet à une ligne de journal émise pendant un `Progress` de s'insérer
-    au-dessus de la barre au lieu de la hacher (cf. [console.py](console.py)).
+    The handler writes to the project's shared `console`, not to an instance of its own:
+    that's what lets a log line emitted during a `Progress` insert itself above the bar
+    instead of slicing through it (see [console.py](console.py)).
     """
     logger = logging.getLogger(_LOGGER_NAME)
     logger.handlers.clear()
@@ -38,10 +38,10 @@ def setup_logging(level: "LogLevel" = "INFO") -> None:
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
-    """Renvoie un logger enfant de ``glyphwell``.
+    """Returns a child logger of ``glyphwell``.
 
-    `name` est typiquement le `__name__` du module appelant ; le préfixe du paquet est
-    retiré pour garder des noms courts à l'affichage.
+    `name` is typically the calling module's `__name__`; the package prefix is
+    stripped to keep displayed names short.
     """
     if name is None:
         return logging.getLogger(_LOGGER_NAME)

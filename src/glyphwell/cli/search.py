@@ -1,6 +1,6 @@
-"""Sous-commandes ``glyphwell search``.
+"""Subcommands ``glyphwell search``.
 
-STATUT : commandes câblées, traitements en attente d'implémentation.
+STATUS: commands wired up, processing pending implementation.
 """
 
 from pathlib import Path
@@ -14,7 +14,7 @@ from glyphwell.search.results import ExportFormat
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Lancement, reprise, suivi et export des recherches.",
+    help="Launching, resuming, tracking and exporting searches.",
     no_args_is_help=True,
 )
 
@@ -24,21 +24,21 @@ def run(
     ctx: typer.Context,
     manifest: Annotated[
         Path,
-        typer.Argument(help="Manifeste YAML décrivant la recherche.", exists=True, dir_okay=False),
+        typer.Argument(help="YAML manifest describing the search.", exists=True, dir_okay=False),
     ],
     limit: Annotated[
         int | None,
-        typer.Option("--limit", min=1, help="Nombre maximal de fichiers, pour un essai."),
+        typer.Option("--limit", min=1, help="Maximum number of files, for a trial run."),
     ] = None,
     concurrency: Annotated[
         int | None,
-        typer.Option("--concurrency", min=1, help="Fenêtres analysées en parallèle."),
+        typer.Option("--concurrency", min=1, help="Chunks analyzed in parallel."),
     ] = None,
 ) -> None:
-    """Lance une recherche sur le corpus indexé.
+    """Launches a search over the indexed corpus.
 
-    Une recherche non terminée portant le même hash de manifeste est reprise plutôt que
-    dupliquée. Le modèle est vérifié auprès d'Ollama avant tout parcours du corpus.
+    An unfinished search sharing the same manifest hash is resumed rather than
+    duplicated. The model is checked against Ollama before scanning the corpus.
     """
     settings = get_context(ctx).settings
     _ = (settings, manifest, limit, concurrency)
@@ -48,16 +48,16 @@ def run(
 @app.command("resume")
 def resume(
     ctx: typer.Context,
-    run_id: Annotated[int, typer.Argument(help="Identifiant de la recherche à reprendre.")],
+    run_id: Annotated[int, typer.Argument(help="Identifier of the search to resume.")],
     limit: Annotated[
         int | None,
-        typer.Option("--limit", min=1, help="Nombre maximal de fichiers à traiter."),
+        typer.Option("--limit", min=1, help="Maximum number of files to process."),
     ] = None,
 ) -> None:
-    """Reprend une recherche interrompue, à la ligne où elle s'était arrêtée.
+    """Resumes an interrupted search, at the row where it stopped.
 
-    Le manifeste est relu depuis l'instantané archivé au lancement, pas depuis le disque :
-    la reprise emploie exactement le prompt et le fenêtrage d'origine.
+    The manifest is re-read from the snapshot archived at launch, not from disk:
+    the resume uses exactly the original prompt and chunking.
     """
     settings = get_context(ctx).settings
     _ = (settings, run_id, limit)
@@ -69,10 +69,10 @@ def status(
     ctx: typer.Context,
     run_id: Annotated[
         int | None,
-        typer.Argument(help="Recherche à détailler. Sans argument : liste tout."),
+        typer.Argument(help="Search to detail. Without an argument: lists everything."),
     ] = None,
 ) -> None:
-    """Affiche l'avancement des recherches."""
+    """Displays the progress of searches."""
     settings = get_context(ctx).settings
     _ = (settings, run_id)
     raise NotImplementedError
@@ -81,24 +81,24 @@ def status(
 @app.command("export")
 def export(
     ctx: typer.Context,
-    run_id: Annotated[int, typer.Argument(help="Recherche à exporter.")],
+    run_id: Annotated[int, typer.Argument(help="Search to export.")],
     export_format: Annotated[
         ExportFormat,
-        typer.Option("--format", "-f", help="Format de sortie."),
+        typer.Option("--format", "-f", help="Output format."),
     ] = ExportFormat.JSONL,
     dest: Annotated[
         Path | None,
-        typer.Option("--dest", "-o", help="Fichier de sortie. Défaut : <data-dir>/exports/"),
+        typer.Option("--dest", "-o", help="Output file. Default: <data-dir>/exports/"),
     ] = None,
     matched_only: Annotated[
         bool,
-        typer.Option("--matched-only/--all", help="N'exporter que les correspondances."),
+        typer.Option("--matched-only/--all", help="Only export matches."),
     ] = True,
 ) -> None:
-    """Exporte les résultats d'une recherche.
+    """Exports the results of a search.
 
-    Les titres sont résolus au moment de l'export : un ré-import des datasets IMDb améliore
-    les exports suivants sans toucher aux résultats déjà enregistrés.
+    Titles are resolved at export time: re-importing the IMDb datasets improves
+    subsequent exports without touching results already recorded.
     """
     settings = get_context(ctx).settings
     _ = (settings, run_id, export_format, dest, matched_only)

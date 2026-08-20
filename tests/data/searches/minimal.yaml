@@ -1,4 +1,4 @@
-# Manifeste réduit au strict minimum requis, utilisé par les tests.
+# Manifest reduced to the strict minimum required, used by the tests.
 name: minimal
 model: test-model
 prompt:

@@ -1,225 +1,226 @@
-# Étape 1 — récupérer le corpus OpenSubtitles
+# Step 1 — fetching the OpenSubtitles corpus
 
-La première étape dépose sur le disque l'archive des sous-titres et vérifie qu'elle est
-exploitable. Sans elle, aucune des étapes suivantes n'a de matière.
+The first step drops the subtitle archive onto disk and verifies that it is usable.
+Without it, none of the following steps have any material to work with.
 
-## En une commande
+## In one command
 
 ```bash
-uv run glyphwell db init                      # une fois
-uv run glyphwell corpus fetch --language en   # 35,8 Go pour la release v2024
+uv run glyphwell db init                      # once
+uv run glyphwell corpus fetch --language en   # 35.8 GB for the v2024 release
 ```
 
-L'URL et la taille sont annoncées **avant** le transfert : rien ne s'engage sans que vous
-sachiez sur quoi. Une interruption n'est pas coûteuse — voir
-[Reprendre un téléchargement](#reprendre-un-téléchargement-interrompu).
+The URL and size are announced **before** the transfer: nothing is committed without you
+knowing what for. An interruption is not costly — see
+[Resuming a download](#resuming-an-interrupted-download).
 
-Pour valider toute la chaîne en quelques secondes plutôt qu'en quelques heures, visez un
-petit corpus OPUS. Voici la sortie réelle d'un tel essai :
+To validate the whole chain in seconds rather than hours, aim for a small OPUS corpus.
+Here is the actual output of such a trial run:
 
 ```
 $ uv run glyphwell corpus fetch --corpus Books --language en --version latest
-Archive OPUS : https://object.pouta.csc.fi/OPUS-Books/v1/raw/en.zip
-Release v1, langue en, préprocessing raw — environ 11.4 MB
-Destination : …\data\corpus
-téléchargement ━━━━━━━━━━━━━━━━━━━━━ 11.4/11.4 MB 10.5 MB/s 0:00:00
+OPUS archive: https://object.pouta.csc.fi/OPUS-Books/v1/raw/en.zip
+Release v1, language en, preprocessing raw — about 11.4 MB
+Destination: …\data\corpus
+downloading ━━━━━━━━━━━━━━━━━━━━━ 11.4/11.4 MB 10.5 MB/s 0:00:00
  Archive              …\data\corpus\Books_v1_raw_en.zip
- Taille               11.4 MB
- Empreinte            83279cfd5aab4bfcc54654134e35c5846027241b7a72f01774f102a815797d5c
- Sous-titres          42
- Fichiers de service  3
-Arborescence interne :
+ Size                 11.4 MB
+ Checksum             83279cfd5aab4bfcc54654134e35c5846027241b7a72f01774f102a815797d5c
+ Subtitles            42
+ Service files        3
+Internal layout:
   Books/raw/en/Hugo_Victor-Notre_Dame_de_Paris.xml
   Books/raw/en/Doyle_Arthur_Conan-Sign_of_Four.xml
   Books/raw/en/Zola_Emile-Germinal.xml
 ```
 
-Le corpus `OpenSubtitles` ajoute deux niveaux à cette arborescence, l'année et
-l'identifiant IMDb — voir [Arborescence interne](#arborescence-interne).
+The `OpenSubtitles` corpus adds two levels to this layout, the year and the IMDb
+identifier — see [Internal layout](#internal-layout).
 
-## D'où vient le corpus
+## Where the corpus comes from
 
-Le corpus provient d'[OPUS](https://opus.nlpl.eu/), qui republie OpenSubtitles sous une
-forme exploitable par machine. `glyphwell` interroge l'index OPUS via
-[`opustools`](https://pypi.org/project/opustools/) puis télécharge l'archive.
+The corpus comes from [OPUS](https://opus.nlpl.eu/), which republishes OpenSubtitles in a
+machine-usable form. `glyphwell` queries the OPUS index via
+[`opustools`](https://pypi.org/project/opustools/) then downloads the archive.
 
-Deux choix sont fixés par défaut :
+Two choices are fixed by default:
 
-- **Corpus `OpenSubtitles`.** Modifiable par `--corpus` — utile surtout pour tester la
-  chaîne sur un petit corpus.
-- **Préprocessing `raw`.** C'est la seule variante qui conserve le texte non tokenisé,
-  utilisable tel quel par un LLM. La variante `xml` découpe chaque phrase en balises
-  `<w>` — inexploitable ici sans recoller les mots.
+- **`OpenSubtitles` corpus.** Changeable via `--corpus` — mostly useful for testing the
+  chain on a small corpus.
+- **`raw` preprocessing.** It's the only variant that keeps the text non-tokenized,
+  usable as-is by an LLM. The `xml` variant splits each sentence into `<w>` tags —
+  unusable here without re-joining the words.
 
-L'archive est nommée d'après ces choix : `OpenSubtitles_v2024_raw_en.zip`. Plusieurs
-releases peuvent donc coexister dans `data/corpus/`.
+The archive is named after these choices: `OpenSubtitles_v2024_raw_en.zip`. Several
+releases can therefore coexist in `data/corpus/`.
 
-## Quelle release ?
+## Which release?
 
-`glyphwell` vise **`v2024`** par défaut, la plus récente et la plus complète. L'index OPUS
-en propose sept pour OpenSubtitles :
+`glyphwell` targets **`v2024`** by default, the most recent and most complete. The OPUS
+index offers seven for OpenSubtitles:
 
-| Release | Taille de l'archive `en` / `raw` |
+| Release | Size of the `en` / `raw` archive |
 |---|---|
-| `v2024` *(défaut)* | 35,8 Go |
-| `v2018` | 13,7 Go |
-| `v2016` | 10,4 Go |
-| `v2013` | 2,9 Go |
-| `v2012` | 6,6 Go |
-| `v2011` | 6,2 Go |
-| `v1` | 42 Mo |
+| `v2024` *(default)* | 35.8 GB |
+| `v2018` | 13.7 GB |
+| `v2016` | 10.4 GB |
+| `v2013` | 2.9 GB |
+| `v2012` | 6.6 GB |
+| `v2011` | 6.2 GB |
+| `v1` | 42 MB |
 
-Une release plus grosse veut dire plus de sous-titres, donc une recherche plus complète et
-plus longue. `--version v2018` vise une release antérieure ; `--version latest` demande à
-l'index la plus récente qu'il déclare, quelle qu'elle soit.
+A bigger release means more subtitles, hence a more thorough and longer search.
+`--version v2018` targets an earlier release; `--version latest` asks the index for
+whichever release it declares as most recent.
 
-Chaque release est une acquisition distincte : les archives coexistent dans `data/corpus/`
-et la table `corpus_downloads` en garde une ligne par couple (release, langue).
+Each release is a separate acquisition: the archives coexist in `data/corpus/` and the
+`corpus_downloads` table keeps one row per (release, language) pair.
 
 ## Options
 
-| Option | Défaut | Effet |
+| Option | Default | Effect |
 |---|---|---|
-| `--language`, `-l` | `GLYPHWELL_OPUS_LANGUAGE` (`en`) | Langue du corpus. |
-| `--version` | `v2024` | Release OPUS. `latest` demande la plus récente. |
-| `--corpus` | `OpenSubtitles` | Nom du corpus OPUS. |
-| `--dest` | `<data-dir>/corpus` | Répertoire où déposer l'archive. |
-| `--force` | — | Retélécharge même si l'archive est déjà présente. |
-| `--hash` | — | Calcule l'empreinte même quand le transfert n'a pas eu lieu. |
+| `--language`, `-l` | `GLYPHWELL_OPUS_LANGUAGE` (`en`) | Corpus language. |
+| `--version` | `v2024` | OPUS release. `latest` asks for the most recent. |
+| `--corpus` | `OpenSubtitles` | Name of the OPUS corpus. |
+| `--dest` | `<data-dir>/corpus` | Directory to drop the archive into. |
+| `--force` | — | Re-downloads even if the archive is already present. |
+| `--hash` | — | Computes the checksum even when no transfer took place. |
 
-## Pourquoi l'archive n'est jamais décompressée
+## Why the archive is never extracted
 
-Décompresser l'archive anglaise coûterait plusieurs dizaines de Go supplémentaires et
-créerait des centaines de milliers de fichiers. `glyphwell` s'en dispense : le zip **est**
-le corpus, et chaque sous-titre en est extrait à la volée au moment où on le lit.
+Extracting the English archive would cost several extra tens of gigabytes and create
+hundreds of thousands of files. `glyphwell` does without: the zip **is** the corpus, and
+each subtitle is extracted from it on the fly at the moment it's read.
 
-Trois conséquences :
+Three consequences:
 
-- **Un artefact unique**, décrit par une seule empreinte. Vérifier que le corpus n'a pas
-  changé, c'est comparer un `sha256`, pas parcourir des centaines de milliers de fichiers.
-- **Un coût mémoire assumé** : `zipfile` charge tout le répertoire central à l'ouverture,
-  de l'ordre de 150 Mo pour 400 000 membres. C'est le prix de l'accès direct à un membre
-  quelconque, sans index annexe.
-- **Un handle par thread.** Les lectures concurrentes sur un même handle se sérialisent ;
-  le moteur de recherche ouvrira donc une poignée de handles indépendants.
+- **A single artifact**, described by a single checksum. Verifying that the corpus hasn't
+  changed means comparing a `sha256`, not walking hundreds of thousands of files.
+- **An accepted memory cost**: `zipfile` loads the whole central directory on open, on the
+  order of 150 MB for 400,000 members. That's the price of direct access to any given
+  member, without a separate index.
+- **One handle per thread.** Concurrent reads on the same handle serialize; the search
+  engine will therefore open a handful of independent handles.
 
-Rien n'est jamais réécrit dans l'archive : elle est en lecture seule d'un bout à l'autre de
-la vie du projet.
+Nothing is ever written back into the archive: it is read-only for the entire life of the
+project.
 
-## Arborescence interne
+## Internal layout
 
-Les membres de l'archive OpenSubtitles suivent cette forme :
+Members of the OpenSubtitles archive follow this shape:
 
 ```
-<corpus>/<preprocessing>/<langue>/<année>/<imdb_id>/<opensubtitles_file_id>.xml
+<corpus>/<preprocessing>/<language>/<year>/<imdb_id>/<opensubtitles_file_id>.xml
 OpenSubtitles/raw/fr/2022/1596342/1957893755.xml
 ```
 
-| Segment | Lecture |
+| Segment | Meaning |
 |---|---|
-| `OpenSubtitles` | nom du corpus OPUS |
-| `raw` | préprocessing |
-| `fr` | langue du sous-titre |
-| `2022` | année de l'œuvre |
-| `1596342` | identifiant IMDb **nu** — soit `tt1596342` sous sa forme canonique |
-| `1957893755` | identifiant du sous-titre sur opensubtitles.org |
+| `OpenSubtitles` | name of the OPUS corpus |
+| `raw` | preprocessing |
+| `fr` | language of the subtitle |
+| `2022` | year of the work |
+| `1596342` | **bare** IMDb identifier — i.e. `tt1596342` in its canonical form |
+| `1957893755` | identifier of the subtitle on opensubtitles.org |
 
-Les deux derniers segments ne désignent pas la même chose : `1596342` identifie l'**œuvre**,
-`1957893755` identifie **une traduction précise** de cette œuvre. Un même film a un
-identifiant IMDb et autant d'identifiants de sous-titres qu'il existe de versions publiées.
-Ce dernier permet de remonter à la fiche d'origine :
+The last two segments don't refer to the same thing: `1596342` identifies the **work**,
+`1957893755` identifies **one specific translation** of that work. A single movie has one
+IMDb identifier and as many subtitle identifiers as there are published versions. The
+latter lets you trace back to the original listing:
 `https://www.opensubtitles.org/en/subtitles/1957893755`.
 
-C'est cet identifiant IMDb qui rend l'étape 2 exacte : les datasets IMDb officiels se
-joignent dessus directement, sans rapprochement approximatif sur le titre.
+It's this IMDb identifier that makes step 2 exact: the official IMDb datasets join
+directly on it, without any approximate matching on title.
 
-L'archive contient aussi trois fichiers de service à sa racine — `INFO`, `README`,
-`LICENSE`. Ils sont comptés à part et ne sont pas des sous-titres.
+The archive also contains three service files at its root — `INFO`, `README`,
+`LICENSE`. They are counted separately and are not subtitles.
 
-Si `corpus fetch` signale des membres à l'**extension inattendue**, l'hypothèse « tous les
-sous-titres sont des `.xml` simples » a cessé d'être vraie pour cette release : c'est à
-vérifier avant d'aller plus loin, car ce serait du texte que `glyphwell` ne lirait pas.
+If `corpus fetch` reports members with an **unexpected extension**, the assumption that
+"all subtitles are plain `.xml`" has stopped holding for this release: that's worth
+checking before going further, since it would be text that `glyphwell` wouldn't read.
 
-## Reprendre un téléchargement interrompu
+## Resuming an interrupted download
 
-Le transfert s'écrit dans `<archive>.zip.part` et n'est renommé qu'une fois terminé. Une
-archive incomplète ne peut donc jamais être prise pour une archive complète.
+The transfer is written to `<archive>.zip.part` and is renamed only once complete. An
+incomplete archive can therefore never be mistaken for a complete one.
 
-Après une coupure — réseau, `Ctrl-C`, machine éteinte — relancez simplement la même
-commande :
+After an interruption — network, `Ctrl-C`, machine powered off — simply rerun the same
+command:
 
 ```bash
 uv run glyphwell corpus fetch --language en
 ```
 
-Le `.part` est repris par en-tête HTTP `Range` : les octets déjà reçus ne le sont pas une
-seconde fois. La barre de progression repart de l'offset atteint, pas de zéro.
+The `.part` is resumed via the HTTP `Range` header: bytes already received aren't
+received a second time. The progress bar picks up from the offset reached, not from
+zero.
 
-Pour repartir de zéro délibérément, `--force` ignore aussi bien l'archive existante que le
-`.part`.
+To deliberately start over from scratch, `--force` ignores both the existing archive and
+the `.part`.
 
-## L'empreinte
+## The checksum
 
-`sha256` sert à détecter qu'une archive a changé — donc qu'il faudra réanalyser ce qu'elle
-contient.
+`sha256` is used to detect that an archive has changed — meaning its contents will need
+to be re-analyzed.
 
-Elle est calculée **au fil du transfert**, ce qui est gratuit : les octets passent de toute
-façon par la mémoire. Mais après une reprise, une partie du fichier n'a pas traversé le
-calcul, et une passe complète sur trente-cinq Go dure plusieurs minutes. `glyphwell` ne la
-déclenche donc pas de lui-même : l'empreinte est alors affichée comme `non calculée`, et
-`--hash` la force.
+It is computed **as the transfer streams by**, which is free: the bytes pass through
+memory anyway. But after a resumption, part of the file hasn't gone through the
+computation, and a full pass over thirty-five gigabytes takes several minutes.
+`glyphwell` therefore doesn't trigger it on its own: the checksum is then displayed as
+`not computed`, and `--hash` forces it.
 
-## Traçabilité
+## Traceability
 
-Chaque acquisition laisse une ligne dans la table `corpus_downloads`, écrite en `pending`
-**avant** le transfert — une base absente doit faire échouer la commande tout de suite, pas
-après trente-cinq Go.
+Each acquisition leaves a row in the `corpus_downloads` table, written as `pending`
+**before** the transfer — a missing database should fail the command right away, not
+after thirty-five gigabytes.
 
 ```bash
 sqlite3 data/glyphwell.db \
   "SELECT opus_version, language, status, downloaded_at FROM corpus_downloads"
 ```
 
-| Colonne | Contenu |
+| Column | Content |
 |---|---|
 | `status` | `pending` \| `downloaded` \| `failed` |
-| `url` | URL exacte servie par l'index OPUS |
-| `archive_path` | emplacement local de l'archive |
-| `sha256` | empreinte, si elle a pu être calculée |
-| `downloaded_at` | fin du transfert |
-| `verified_at` | ouverture de l'archive et comptage des membres |
+| `url` | exact URL served by the OPUS index |
+| `archive_path` | local location of the archive |
+| `sha256` | checksum, if it could be computed |
+| `downloaded_at` | end of the transfer |
+| `verified_at` | opening of the archive and counting of members |
 
-Une empreinte déjà connue n'est jamais effacée par une exécution ultérieure qui n'en
-produit pas. Il n'existe pas de statut `extracted` : rien n'est extrait.
+A checksum already known is never erased by a later run that doesn't produce one. There
+is no `extracted` status: nothing is extracted.
 
-## Relancer la commande
+## Rerunning the command
 
-`corpus fetch` est idempotent. Relancée sur une archive déjà présente, elle ne retélécharge
-rien, revérifie l'archive et met la traçabilité à jour. C'est le moyen le plus simple de
-contrôler que le corpus est en bon état.
+`corpus fetch` is idempotent. Rerun on an archive that's already present, it doesn't
+re-download anything, re-verifies the archive, and updates traceability. It's the
+simplest way to check that the corpus is in good shape.
 
-## Dépannage
+## Troubleshooting
 
-**« aucune archive monolingue … dans l'index OPUS »** — la combinaison corpus / version /
-langue n'existe pas. Le message énumère les releases et les langues que l'index propose
-réellement ; il s'agit le plus souvent d'une release inexistante pour cette langue.
+**"no monolingual archive … in the OPUS index"** — the corpus / version / language
+combination doesn't exist. The message lists the releases and languages the index
+actually offers; this is most often a release that doesn't exist for that language.
 
-**« index OPUS injoignable »** — l'index (`https://opus.nlpl.eu/opusapi`) n'a pas répondu.
-Derrière un proxy d'entreprise, renseignez `HTTPS_PROXY`. Rien n'a été téléchargé, rien
-n'est à nettoyer.
+**"OPUS index unreachable"** — the index (`https://opus.nlpl.eu/opusapi`) didn't respond.
+Behind a corporate proxy, set `HTTPS_PROXY`. Nothing was downloaded, nothing needs
+cleaning up.
 
-**« téléchargement interrompu … le fichier … est conservé »** — la coupure est survenue en
-cours de transfert. Relancez la même commande : elle reprendra.
+**"download interrupted … the file … is kept"** — the interruption occurred during the
+transfer. Rerun the same command: it will resume.
 
-**« … n'est pas une archive zip exploitable »** — le fichier présent est tronqué ou
-corrompu. `--force` le remplace.
+**"… is not a usable zip archive"** — the file present is truncated or corrupted.
+`--force` replaces it.
 
-**Disque plein** — le message d'écriture nomme le `.part` concerné. Libérez de la place ou
-déplacez la destination (`--dest`, ou `GLYPHWELL_DATA_DIR`), puis relancez : ce qui a déjà
-été téléchargé est conservé.
+**Disk full** — the write error names the `.part` file in question. Free up space or move
+the destination (`--dest`, or `GLYPHWELL_DATA_DIR`), then rerun: what has already been
+downloaded is kept.
 
-## Et ensuite
+## What's next
 
-L'archive est en place, mais son contenu n'est pas encore catalogué. `glyphwell corpus
-index` — pas encore implémenté — parcourra ses membres et alimentera la table
-`subtitle_files`.
+The archive is in place, but its content is not yet cataloged. `glyphwell corpus
+index` — not yet implemented — will walk its members and populate the `subtitle_files`
+table.

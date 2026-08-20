@@ -1,4 +1,4 @@
-"""Manifestes de recherche : modèle, chargement, pré-filtre."""
+"""Search manifests: model, loading, prefilter."""
 
 from glyphwell.manifest.loader import LoadedManifest, load, manifest_hash
 from glyphwell.manifest.model import SearchManifest

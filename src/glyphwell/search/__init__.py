@@ -1,4 +1,4 @@
-"""Moteur de recherche : planification, exécution, reprise, export."""
+"""Search engine: planning, execution, resume, export."""
 
 from glyphwell.search.checkpoint import Checkpoint, commit_chunk, load_checkpoint
 from glyphwell.search.engine import SearchEngine, SearchOutcome

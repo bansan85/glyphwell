@@ -1,9 +1,9 @@
-"""Alias de types partagés (PEP 695).
+"""Shared type aliases (PEP 695).
 
-Ces alias sont paresseux et sans coût d'exécution. Ils servent à rendre les signatures
-lisibles et à distinguer des identifiants qui sont tous des chaînes mais ne sont pas
-interchangeables : un identifiant IMDb, un identifiant de sous-titre opensubtitles.org
-et un identifiant de phrase n'ont ni le même domaine ni la même provenance.
+These aliases are lazy and have no runtime cost. They make signatures readable and
+distinguish identifiers that are all strings but not interchangeable: an IMDb
+identifier, an opensubtitles.org subtitle identifier, and a sentence identifier have
+neither the same domain nor the same origin.
 """
 
 from pydantic import JsonValue
@@ -20,41 +20,41 @@ __all__ = [
 ]
 
 type ImdbId = str
-"""Identifiant IMDb canonique, préfixe inclus : ``tt0133093``.
+"""Canonical IMDb identifier, prefix included: ``tt0133093``.
 
-L'archive OPUS porte la forme nue (``133093``, ``1596342``) dans ses chemins ; la
-normalisation vers cette forme canonique est centralisée dans `glyphwell.corpus.layout`.
+The OPUS archive carries the bare form (``133093``, ``1596342``) in its paths;
+normalization to this canonical form is centralized in `glyphwell.corpus.layout`.
 """
 
 type OpenSubtitlesFileId = str
-"""Identifiant du sous-titre sur opensubtitles.org : ``1957893755``.
+"""Subtitle identifier on opensubtitles.org: ``1957893755``.
 
-C'est lui que porte le nom de fichier dans l'archive OPUS. Il désigne une *traduction*
-précise, là où `ImdbId` désigne l'œuvre : un même film a un `ImdbId` et autant
-d'identifiants de sous-titres que de versions publiées. Permet de remonter à
+It's what the file name carries in the OPUS archive. It designates a specific
+*translation*, whereas `ImdbId` designates the work: a single film has one `ImdbId`
+and as many subtitle identifiers as published versions. Lets you trace back to
 ``https://www.opensubtitles.org/en/subtitles/<id>``.
 """
 
 type SentenceId = str
-"""Attribut ``id`` d'une balise ``<s>`` du XML OPUS.
+"""``id`` attribute of an ``<s>`` tag in the OPUS XML.
 
-Ordinal **opaque** : ordonné, mais pas nécessairement contigu ni purement numérique. La
-position dans le flux (`Sentence.index`) est ce qui fait autorité pour la reprise ; cet
-identifiant n'est conservé que pour la traçabilité.
+An **opaque** ordinal: ordered, but not necessarily contiguous or purely numeric. The
+position in the stream (`Sentence.index`) is the authority for resumption; this
+identifier is kept only for traceability.
 """
 
 type LanguageCode = str
-"""Code de langue tel qu'utilisé par OPUS : ``en``, ``fr``, ..."""
+"""Language code as used by OPUS: ``en``, ``fr``, ..."""
 
 type OpusVersion = str
-"""Version d'une release OPUS : ``v2024``."""
+"""Version of an OPUS release: ``v2024``."""
 
 type Sha256 = str
-"""Empreinte SHA-256 en hexadécimal minuscule."""
+"""SHA-256 checksum in lowercase hexadecimal."""
 
 type JsonObject = dict[str, JsonValue]
-"""Objet JSON quelconque.
+"""Any JSON object.
 
-Utilisé aux frontières non typées (YAML, réponse du modèle) à la place de ``Any``, que
-mypy interdit dans ce projet.
+Used at untyped boundaries (YAML, model response) in place of ``Any``, which mypy
+forbids in this project.
 """

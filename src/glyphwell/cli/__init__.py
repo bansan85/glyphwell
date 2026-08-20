@@ -1,7 +1,7 @@
-"""Point d'entrée de la ligne de commande.
+"""Command-line entry point.
 
-Le callback racine résout la configuration une fois et la dépose dans le contexte Typer :
-les sous-commandes n'ont ainsi ni à relire l'environnement ni à reconstruire un `Settings`.
+The root callback resolves the configuration once and stores it in the Typer context:
+subcommands thus never need to re-read the environment or rebuild a `Settings`.
 """
 
 from pathlib import Path
@@ -22,8 +22,8 @@ __all__ = ["AppContext", "app", "get_context", "main"]
 app = typer.Typer(
     name="glyphwell",
     help=(
-        "Recherche pilotée par LLM sur le corpus de sous-titres OpenSubtitles : "
-        "téléchargement du corpus, résolution des titres IMDb, recherche reprenable "
+        "LLM-driven search over the OpenSubtitles subtitle corpus: "
+        "corpus download, IMDb title resolution, resumable search "
         "via Ollama."
     ),
     no_args_is_help=True,
@@ -38,7 +38,7 @@ app.add_typer(search.app, name="search")
 
 
 def _version_callback(value: bool) -> None:
-    """Affiche la version puis termine, comme le veut la convention `--version`."""
+    """Prints the version then exits, as the `--version` convention dictates."""
     if value:
         typer.echo(f"glyphwell {__version__}")
         raise typer.Exit
@@ -51,7 +51,7 @@ def root(
         Path | None,
         typer.Option(
             "--data-dir",
-            help="Racine des données (corpus, datasets, base). Défaut : ./data",
+            help="Data root (corpus, datasets, database). Default: ./data",
             envvar="GLYPHWELL_DATA_DIR",
         ),
     ] = None,
@@ -59,13 +59,13 @@ def root(
         Path | None,
         typer.Option(
             "--database",
-            help="Chemin de la base SQLite. Défaut : <data-dir>/glyphwell.db",
+            help="Path to the SQLite database. Default: <data-dir>/glyphwell.db",
             envvar="GLYPHWELL_DATABASE",
         ),
     ] = None,
     log_level: Annotated[
         LogLevel | None,
-        typer.Option("--log-level", help="Verbosité de la journalisation."),
+        typer.Option("--log-level", help="Logging verbosity."),
     ] = None,
     _version: Annotated[
         bool,
@@ -73,14 +73,14 @@ def root(
             "--version",
             callback=_version_callback,
             is_eager=True,
-            help="Affiche la version et quitte.",
+            help="Prints the version and exits.",
         ),
     ] = False,
 ) -> None:
-    """Options communes à toutes les sous-commandes."""
-    # `Settings` lit l'environnement et le `.env` ; les options explicites l'emportent.
-    # On reconstruit l'objet au lieu de le muter, pour que les valeurs venues de la ligne de
-    # commande passent elles aussi par la validation pydantic.
+    """Options common to all subcommands."""
+    # `Settings` reads the environment and `.env`; explicit options take precedence.
+    # The object is rebuilt rather than mutated, so that values coming from the command
+    # line also go through pydantic validation.
     from_env = Settings()
     settings = Settings(
         data_dir=from_env.data_dir if data_dir is None else data_dir,
@@ -93,9 +93,9 @@ def root(
 
 
 def main() -> None:
-    """Lance la CLI en présentant les erreurs attendues sans trace de pile."""
+    """Runs the CLI, presenting expected errors without a stack trace."""
     try:
         app()
     except GlyphwellError as exc:
-        typer.secho(f"Erreur : {exc}", fg=typer.colors.RED, err=True)
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc

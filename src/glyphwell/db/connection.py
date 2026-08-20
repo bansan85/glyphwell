@@ -1,8 +1,8 @@
-"""Ouverture des connexions SQLite.
+"""Opening SQLite connections.
 
-Un seul endroit configure les PRAGMA : le mode WAL est indispensable ici, car le moteur de
-recherche écrit un résultat par fenêtre pendant qu'une autre commande (``db status``,
-``search status``) peut lire la base.
+A single place configures the PRAGMAs: WAL mode is essential here, because the search
+engine writes one result per chunk while another command (``db status``,
+``search status``) may be reading the database.
 """
 
 import sqlite3
@@ -17,23 +17,23 @@ __all__ = ["connect", "open_connection"]
 
 _log = get_logger(__name__)
 
-# 30 s : un import de dataset IMDb tient le verrou d'écriture un certain temps.
+# 30 s: an IMDb dataset import holds the write lock for a while.
 _BUSY_TIMEOUT_MS = 30_000
 
 
 def open_connection(path: Path, *, create: bool = False) -> sqlite3.Connection:
-    """Ouvre la base et applique les PRAGMA du projet.
+    """Opens the database and applies the project's PRAGMAs.
 
     Args:
-        path: chemin du fichier SQLite.
-        create: si faux, l'absence du fichier est une erreur — on évite de créer
-            silencieusement une base vide quand l'utilisateur s'est trompé de chemin.
+        path: path to the SQLite file.
+        create: if false, a missing file is an error — this avoids silently creating an
+            empty database when the user got the path wrong.
 
     Raises:
-        DatabaseError: base absente alors que `create` est faux, ou échec d'ouverture.
+        DatabaseError: the database is missing while `create` is false, or opening failed.
     """
     if not create and not path.exists():
-        message = f"base introuvable : {path}. Lancer `glyphwell db init` d'abord."
+        message = f"database not found: {path}. Run `glyphwell db init` first."
         raise DatabaseError(message)
 
     if create:
@@ -42,7 +42,7 @@ def open_connection(path: Path, *, create: bool = False) -> sqlite3.Connection:
     try:
         conn = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_MS / 1000, isolation_level=None)
     except sqlite3.Error as exc:
-        message = f"impossible d'ouvrir {path} : {exc}"
+        message = f"could not open {path}: {exc}"
         raise DatabaseError(message) from exc
 
     conn.row_factory = sqlite3.Row
@@ -51,17 +51,17 @@ def open_connection(path: Path, *, create: bool = False) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA temp_store = MEMORY")
-    _log.debug("base ouverte : %s", path)
+    _log.debug("database opened: %s", path)
     return conn
 
 
 @contextmanager
 def connect(path: Path, *, create: bool = False) -> Iterator[sqlite3.Connection]:
-    """Contextmanager autour de `open_connection`, qui garantit la fermeture.
+    """Context manager around `open_connection` that guarantees closing.
 
-    `isolation_level=None` désactive l'autocommit implicite de sqlite3 : les transactions
-    sont explicites (``BEGIN`` / ``COMMIT``), ce qu'exige l'invariant « une transaction par
-    fenêtre » du moteur de recherche.
+    `isolation_level=None` disables sqlite3's implicit autocommit: transactions are
+    explicit (``BEGIN`` / ``COMMIT``), which the search engine's "one transaction per
+    chunk" invariant requires.
     """
     conn = open_connection(path, create=create)
     try:

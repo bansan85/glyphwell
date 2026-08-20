@@ -1,12 +1,12 @@
-"""Modèle du manifeste de recherche.
+"""Search manifest model.
 
-Un manifeste est un YAML déclaratif : prompt, modèle Ollama, filtres de sélection,
-paramètres de fenêtrage, pré-filtre textuel et schéma de sortie attendu. Il est validé par
-pydantic à l'ouverture, ce qui fait échouer une recherche mal décrite avant le premier appel
-au modèle plutôt qu'au millième fichier.
+A manifest is a declarative YAML: prompt, Ollama model, selection filters, chunking
+parameters, textual prefilter, and expected output schema. It is validated by pydantic at
+load time, which makes a poorly described search fail before the first call to the model
+rather than at the thousandth file.
 
-Aucun code n'est exécuté depuis un manifeste : c'est de la donnée, versionnable, diffable et
-hachable.
+No code is ever executed from a manifest: it is data, versionable, diffable, and
+hashable.
 """
 
 from enum import StrEnum
@@ -30,58 +30,57 @@ type OutputFormat = Literal["json", "text"]
 
 
 class _Base(BaseModel):
-    """Base commune : un champ inconnu est une erreur, pas un silence.
+    """Common base: an unknown field is an error, not silence.
 
-    Une faute de frappe dans une clé du YAML ne doit pas se traduire par un filtre
-    silencieusement ignoré.
+    A typo in a YAML key must not turn into a filter that is silently ignored.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class PrefilterMode(StrEnum):
-    """Mode de pré-filtrage appliqué avant tout appel au modèle."""
+    """Prefiltering mode applied before any call to the model."""
 
     ANY = "any"
-    """Retenir la fenêtre si au moins un motif est présent."""
+    """Keep the chunk if at least one pattern is present."""
 
     ALL = "all"
-    """Retenir la fenêtre si tous les motifs sont présents."""
+    """Keep the chunk if all patterns are present."""
 
     NONE = "none"
-    """Retenir la fenêtre si aucun motif n'est présent."""
+    """Keep the chunk if no pattern is present."""
 
     OFF = "off"
-    """Pas de pré-filtrage : toutes les fenêtres partent au modèle."""
+    """No prefiltering: every chunk is sent to the model."""
 
 
 class ChunkConfig(_Base):
-    """Fenêtrage : unité d'appel au modèle et unité de reprise."""
+    """Chunking: unit of model calls and unit of resuming."""
 
-    size: int = Field(default=80, ge=1, description="Nombre de phrases par fenêtre.")
+    size: int = Field(default=80, ge=1, description="Number of sentences per chunk.")
     overlap: int = Field(
         default=10,
         ge=0,
         description=(
-            "Phrases répétées d'une fenêtre à la suivante, pour ne pas couper un passage en deux."
+            "Sentences repeated from one chunk to the next, so a passage is not cut in two."
         ),
     )
 
     @model_validator(mode="after")
     def _check_overlap(self) -> Self:
-        """Un recouvrement supérieur ou égal à la taille empêcherait la fenêtre d'avancer."""
+        """An overlap greater than or equal to the size would prevent the chunk from advancing."""
         if self.overlap >= self.size:
-            message = f"chunk.overlap ({self.overlap}) doit être < chunk.size ({self.size})"
+            message = f"chunk.overlap ({self.overlap}) must be < chunk.size ({self.size})"
             raise ValueError(message)
         return self
 
 
 class PrefilterConfig(_Base):
-    """Pré-filtre textuel, évalué localement.
+    """Textual prefilter, evaluated locally.
 
-    Un appel LLM coûte des ordres de grandeur de plus qu'une recherche de sous-chaîne : sur
-    des centaines de milliers de sous-titres, un pré-filtre bien choisi change la durée
-    totale d'une recherche.
+    An LLM call costs orders of magnitude more than a substring search: across hundreds
+    of thousands of subtitles, a well-chosen prefilter changes the total duration of a
+    search.
     """
 
     mode: PrefilterMode = PrefilterMode.OFF
@@ -89,27 +88,27 @@ class PrefilterConfig(_Base):
     case_sensitive: bool = False
     regex: bool = Field(
         default=False,
-        description="Interpréter les motifs comme des expressions régulières.",
+        description="Interpret the patterns as regular expressions.",
     )
 
     @model_validator(mode="after")
     def _check_patterns(self) -> Self:
-        """Un mode actif sans motif ne filtrerait rien, ou tout : c'est une erreur de saisie."""
+        """An active mode without a pattern would filter nothing, or everything: an input error."""
         if self.mode is not PrefilterMode.OFF and not self.patterns:
-            message = f"prefilter.mode = {self.mode.value} exige au moins un motif"
+            message = f"prefilter.mode = {self.mode.value} requires at least one pattern"
             raise ValueError(message)
         return self
 
 
 class YearRange(_Base):
-    """Intervalle d'années, bornes incluses. `None` signifie « pas de borne »."""
+    """Year range, bounds included. `None` means "no bound"."""
 
     min: int | None = None
     max: int | None = None
 
     @model_validator(mode="after")
     def _check_order(self) -> Self:
-        """Bornes inversées : plus probablement une erreur qu'une intention."""
+        """Reversed bounds: more likely a mistake than an intent."""
         if self.min is not None and self.max is not None and self.min > self.max:
             message = f"select.years.min ({self.min}) > select.years.max ({self.max})"
             raise ValueError(message)
@@ -117,29 +116,29 @@ class YearRange(_Base):
 
 
 class SelectConfig(_Base):
-    """Sélection des sous-titres à analyser.
+    """Selection of subtitles to analyze.
 
-    Les filtres portant sur le titre (type, année, contenu adulte) exigent que les datasets
-    IMDb aient été importés ; sans eux, les fichiers non résolus sont écartés.
+    Filters on the title (type, year, adult content) require the IMDb datasets to have
+    been imported; without them, unresolved files are excluded.
     """
 
     languages: tuple[str, ...] = ("en",)
     title_types: tuple[str, ...] = Field(
         default=(),
-        description="Types IMDb retenus (movie, tvEpisode, tvSeries...). Vide = tous.",
+        description="IMDb types kept (movie, tvEpisode, tvSeries...). Empty = all.",
     )
     years: YearRange = YearRange()
     exclude_adult: bool = True
     imdb_ids: tuple[str, ...] | None = Field(
         default=None,
-        description="Restreint la recherche à ces titres. `null` = tout le corpus.",
+        description="Restricts the search to these titles. `null` = the whole corpus.",
     )
 
 
 class PromptConfig(_Base):
-    """Gabarits de prompt.
+    """Prompt templates.
 
-    Substitutions disponibles : ``{{ title }}``, ``{{ year }}``, ``{{ imdb_id }}``,
+    Available substitutions: ``{{ title }}``, ``{{ year }}``, ``{{ imdb_id }}``,
     ``{{ first_id }}``, ``{{ last_id }}``, ``{{ chunk }}``.
     """
 
@@ -148,15 +147,14 @@ class PromptConfig(_Base):
 
 
 class OutputConfig(_Base):
-    """Forme attendue de la réponse du modèle."""
+    """Expected shape of the model's response."""
 
     format: OutputFormat = "json"
     json_schema: dict[str, JsonValue] | None = Field(
         default=None,
         alias="schema",
         description=(
-            "JSON Schema transmis à Ollama pour contraindre la génération, puis revérifié "
-            "côté client."
+            "JSON Schema passed to Ollama to constrain generation, then re-checked client-side."
         ),
     )
 
@@ -164,22 +162,22 @@ class OutputConfig(_Base):
 
     @model_validator(mode="after")
     def _check_schema(self) -> Self:
-        """Un schéma n'a de sens qu'en sortie JSON."""
+        """A schema only makes sense for JSON output."""
         if self.format == "text" and self.json_schema is not None:
-            message = "output.schema est inutilisable avec output.format = text"
+            message = "output.schema cannot be used with output.format = text"
             raise ValueError(message)
         return self
 
 
 class SearchManifest(_Base):
-    """Un manifeste de recherche complet."""
+    """A complete search manifest."""
 
-    name: str = Field(min_length=1, description="Identifiant lisible de la recherche.")
+    name: str = Field(min_length=1, description="Human-readable identifier of the search.")
     description: str | None = None
-    model: str = Field(min_length=1, description="Modèle Ollama, par exemple llama3.1:8b.")
+    model: str = Field(min_length=1, description="Ollama model, for example llama3.1:8b.")
     options: dict[str, JsonValue] = Field(
         default_factory=dict,
-        description="Options passées telles quelles à Ollama (temperature, num_ctx...).",
+        description="Options passed through as-is to Ollama (temperature, num_ctx...).",
     )
 
     select: SelectConfig = SelectConfig()
@@ -191,7 +189,7 @@ class SearchManifest(_Base):
     match_when: str | None = Field(
         default=None,
         description=(
-            "Nom du champ booléen de la réponse qui détermine `results.matched`. "
-            "`null` : tout résultat produit est considéré comme une correspondance."
+            "Name of the boolean field of the response that determines `results.matched`. "
+            "`null`: every produced result is considered a match."
         ),
     )

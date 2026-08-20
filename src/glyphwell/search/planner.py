@@ -1,16 +1,16 @@
-"""Construction de la file de travail d'une recherche.
+"""Building a search's work queue.
 
-Le planner traduit les filtres ``select`` du manifeste en un ensemble de fichiers, puis
-matérialise cet ensemble dans `run_files`. Matérialiser la file plutôt que la recalculer à
-chaque tour a deux vertus : la progression est mesurable, et une reprise reprend exactement
-la même liste même si le corpus a grossi entre-temps.
+The planner translates the manifest's ``select`` filters into a set of files, then
+materializes that set into `run_files`. Materializing the queue rather than recomputing it
+every round has two virtues: progress is measurable, and a resume picks up exactly the
+same list even if the corpus has grown in the meantime.
 
-**L'ordre est un invariant, pas un détail.** Le parcours se fait toujours en
-``ORDER BY subtitle_files.rel_path``. Sans cet ordre fixe, `chunk_index` ne désignerait pas
-la même plage de phrases d'une exécution à l'autre, et la contrainte d'unicité sur `results`
-cesserait de garantir l'idempotence.
+**Order is an invariant, not a detail.** Traversal is always ``ORDER BY
+subtitle_files.rel_path``. Without this fixed order, `chunk_index` would not designate the
+same sentence range from one run to the next, and the uniqueness constraint on `results`
+would stop guaranteeing idempotence.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 import sqlite3
@@ -27,10 +27,10 @@ __all__ = ["PlannedFile", "enqueue", "iter_work", "plan_size"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PlannedFile:
-    """Un fichier à traiter, avec ce qu'il faut pour le lire et le décrire.
+    """A file to process, with what is needed to read and describe it.
 
-    Regroupe en un objet ce qui viendrait autrement de trois requêtes : le fichier, son
-    titre et son curseur.
+    Groups into one object what would otherwise come from three queries: the file, its
+    title, and its cursor.
     """
 
     file_id: int
@@ -42,17 +42,17 @@ class PlannedFile:
 
 
 def enqueue(conn: sqlite3.Connection, *, run_id: int, select: "SelectConfig") -> int:
-    """Remplit `run_files` pour une recherche et renvoie le nombre de fichiers ajoutés.
+    """Fills `run_files` for a search and returns the number of files added.
 
-    Idempotent : relançable pour compléter la file d'une recherche existante quand de
-    nouveaux fichiers sont apparus au corpus, sans toucher aux fichiers déjà traités.
+    Idempotent: can be re-run to complete the queue of an existing search when new files
+    have appeared in the corpus, without touching files already processed.
 
-    Les filtres portant sur le titre exigent que les datasets IMDb aient été importés. Les
-    fichiers dont l'identifiant reste non résolu sont écartés, et leur nombre est journalisé
-    — un corpus indexé sans métadonnées produirait sinon une file vide sans explication.
+    Filters on the title require the IMDb datasets to have been imported. Files whose
+    identifier remains unresolved are discarded, and their count is logged — otherwise a
+    corpus indexed without metadata would produce an empty queue with no explanation.
 
     Raises:
-        DatabaseError: échec d'écriture.
+        DatabaseError: write failed.
     """
     raise NotImplementedError
 
@@ -63,21 +63,21 @@ def iter_work(
     run_id: int,
     limit: int | None = None,
 ) -> "Iterator[PlannedFile]":
-    """Produit les fichiers non terminés, dans l'ordre déterministe du plan.
+    """Yields unfinished files, in the plan's deterministic order.
 
-    Générateur : la file peut compter des centaines de milliers d'entrées.
+    Generator: the queue can hold hundreds of thousands of entries.
 
     Args:
-        conn: connexion à la base.
-        run_id: recherche concernée.
-        limit: arrête après ce nombre de fichiers, pour un essai rapide.
+        conn: database connection.
+        run_id: search concerned.
+        limit: stops after this number of files, for a quick trial.
 
     Yields:
-        Les fichiers à traiter, ``ORDER BY rel_path``.
+        Files to process, ``ORDER BY rel_path``.
     """
     raise NotImplementedError
 
 
 def plan_size(conn: sqlite3.Connection, run_id: int) -> tuple[int, int]:
-    """Renvoie ``(fichiers terminés, fichiers au plan)`` pour l'affichage de progression."""
+    """Returns ``(files done, files planned)`` for displaying progress."""
     raise NotImplementedError

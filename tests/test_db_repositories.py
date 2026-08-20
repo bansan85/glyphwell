@@ -1,4 +1,4 @@
-"""Traçabilité des acquisitions du corpus."""
+"""Traceability of corpus acquisitions."""
 
 import sqlite3
 
@@ -42,7 +42,7 @@ def test_upsert_then_get(db: sqlite3.Connection) -> None:
 
 
 def test_upsert_is_idempotent_on_the_natural_key(db: sqlite3.Connection) -> None:
-    """Relancer `corpus fetch` doit reprendre la même ligne, pas en empiler une seconde."""
+    """Rerunning `corpus fetch` must reuse the same row, not stack a second one."""
     repo = CorpusDownloadsRepository(db)
     first = repo.upsert(_row())
     second = repo.upsert(_row())
@@ -73,7 +73,7 @@ def test_mark_records_completion(db: sqlite3.Connection) -> None:
 
 
 def test_a_known_hash_survives_a_later_upsert(db: sqlite3.Connection) -> None:
-    """Une empreinte ne se calcule pas gratuitement : la réécrire à `NULL` la perdrait."""
+    """A checksum is not computed for free: overwriting it with `NULL` would lose it."""
     repo = CorpusDownloadsRepository(db)
     download_id = repo.upsert(_row())
     repo.mark(download_id, DownloadStatus.DOWNLOADED, sha256="cd" * 32)
@@ -99,7 +99,7 @@ def test_failure_is_recorded(db: sqlite3.Connection) -> None:
 
 
 def test_versions_are_distinct_acquisitions(db: sqlite3.Connection) -> None:
-    """Deux releases du même corpus coexistent : la version fait partie de la clé."""
+    """Two releases of the same corpus coexist: the version is part of the key."""
     repo = CorpusDownloadsRepository(db)
     repo.upsert(_row())
     repo.upsert(_row(opus_version="v2024"))

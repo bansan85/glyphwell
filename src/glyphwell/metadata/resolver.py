@@ -1,11 +1,10 @@
-"""Résolution d'un identifiant IMDb vers un titre exploitable.
+"""Resolving an IMDb identifier to a usable title.
 
-Le corpus ne fournit que des identifiants ; l'affichage des résultats et les filtres de
-sélection du manifeste (type, année, contenu adulte) ont besoin du titre. La résolution est
-exposée derrière un `Protocol` afin que les tests puissent injecter une table en mémoire
-sans base SQLite.
+The corpus only provides identifiers; displaying results and the manifest's selection
+filters (type, year, adult content) need the title. Resolution is exposed behind a
+`Protocol` so that tests can inject an in-memory table without a SQLite database.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 import sqlite3
@@ -20,7 +19,7 @@ __all__ = ["SqliteTitleProvider", "Title", "TitleProvider"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Title:
-    """Un titre résolu : film, série, ou épisode rattaché à sa série."""
+    """A resolved title: movie, series, or episode linked to its series."""
 
     imdb_id: ImdbId
     title_type: str | None
@@ -34,44 +33,44 @@ class Title:
 
     @property
     def is_episode(self) -> bool:
-        """Vrai si le titre est un épisode rattaché à une série."""
+        """True if the title is an episode linked to a series."""
         return self.parent_imdb_id is not None
 
     def display_name(self) -> str:
-        """Libellé lisible, pour les prompts et les exports.
+        """Human-readable label, for prompts and exports.
 
-        Un épisode est présenté comme ``Série S01E02 — Titre (année)``, un film comme
-        ``Titre (année)``. Les parties inconnues sont simplement omises.
+        An episode is presented as ``Series S01E02 — Title (year)``, a movie as
+        ``Title (year)``. Unknown parts are simply omitted.
         """
         raise NotImplementedError
 
 
 class TitleProvider(Protocol):
-    """Source de titres interrogeable par identifiant IMDb."""
+    """Source of titles queryable by IMDb identifier."""
 
     def resolve(self, imdb_id: ImdbId) -> Title | None:
-        """Renvoie le titre, ou `None` s'il est inconnu de cette source."""
+        """Returns the title, or `None` if unknown to this source."""
         ...
 
     def resolve_many(self, imdb_ids: Iterable[ImdbId]) -> Mapping[ImdbId, Title]:
-        """Résout un lot d'identifiants. Les identifiants inconnus sont absents du résultat."""
+        """Resolves a batch of identifiers. Unknown identifiers are absent from the result."""
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class SqliteTitleProvider:
-    """`TitleProvider` adossé à la table `titles`, alimentée par les datasets IMDb.
+    """`TitleProvider` backed by the `titles` table, populated from the IMDb datasets.
 
-    Pour un épisode, la requête joint la série parente afin que `Title.parent_title` soit
-    renseigné en une seule passe.
+    For an episode, the query joins the parent series so that `Title.parent_title` is
+    filled in a single pass.
     """
 
     conn: sqlite3.Connection
 
     def resolve(self, imdb_id: ImdbId) -> Title | None:
-        """Voir `TitleProvider.resolve`."""
+        """See `TitleProvider.resolve`."""
         raise NotImplementedError
 
     def resolve_many(self, imdb_ids: Iterable[ImdbId]) -> Mapping[ImdbId, Title]:
-        """Voir `TitleProvider.resolve_many`."""
+        """See `TitleProvider.resolve_many`."""
         raise NotImplementedError

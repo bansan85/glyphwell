@@ -1,4 +1,4 @@
-"""Le schéma s'applique et porte la bonne version."""
+"""The schema applies cleanly and carries the right version."""
 
 import sqlite3
 
@@ -25,18 +25,18 @@ def test_initialize_creates_all_tables(db: sqlite3.Connection) -> None:
 
 
 def test_initialize_is_idempotent(db: sqlite3.Connection) -> None:
-    """`db init` doit pouvoir être relancé sans erreur sur une base déjà en place."""
+    """`db init` must be rerunnable without error on a database already in place."""
     assert initialize(db) == SCHEMA_VERSION
 
 
 def test_no_full_text_index(db: sqlite3.Connection) -> None:
-    """Choix de conception : le texte des sous-titres n'est jamais indexé en base."""
+    """Design choice: subtitle text is never indexed in the database."""
     rows = db.execute("SELECT name FROM sqlite_master").fetchall()
     assert not [row["name"] for row in rows if "fts" in row["name"].lower()]
 
 
 def test_results_unique_constraint_enforces_idempotence(db: sqlite3.Connection) -> None:
-    """Garantie centrale de la reprise : une fenêtre ne peut pas être enregistrée deux fois."""
+    """Core guarantee of resuming: a chunk can never be recorded twice."""
     db.execute(
         "INSERT INTO subtitle_files"
         " (opus_version, language, imdb_id, opensubtitles_file_id, rel_path)"
@@ -54,7 +54,7 @@ def test_results_unique_constraint_enforces_idempotence(db: sqlite3.Connection) 
     )
     db.execute(insert)
 
-    # Le rejeu d'une fenêtre après interruption ne doit pas créer de doublon.
+    # Replaying a chunk after an interruption must not create a duplicate.
     db.execute(insert.replace("INSERT INTO", "INSERT OR IGNORE INTO"))
 
     count = db.execute("SELECT count(*) AS n FROM results").fetchone()["n"]

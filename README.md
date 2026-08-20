@@ -1,116 +1,115 @@
 # glyphwell
 
-Recherche pilotée par LLM sur l'intégralité du corpus de sous-titres OpenSubtitles.
+LLM-driven search across the entire OpenSubtitles subtitle corpus.
 
-`glyphwell` enchaîne quatre étapes :
+`glyphwell` chains four steps:
 
-1. **Télécharger** les sous-titres — corpus OPUS *OpenSubtitles*, langue `en`, format `raw`
-   (XML non tokenisé), via [`opustools`](https://pypi.org/project/opustools/). L'archive
-   n'est jamais décompressée : les sous-titres en sont lus à la volée.
-2. **Résoudre les titres** — les sous-titres sont classés par identifiant IMDb,
-   et les datasets IMDb officiels se joignent directement sur cet identifiant : titre,
-   type (film / série / épisode), année, flag adulte, rattachement épisode → série.
-   Hors-ligne, sans clé API.
-3. **Chercher** — un manifeste YAML décrit le prompt, le modèle Ollama, les filtres de
-   sélection et le schéma de sortie attendu. Chaque sous-titre est découpé en fenêtres
-   glissantes de N phrases, chaque fenêtre donne un appel au modèle.
-4. **Reprendre** — l'état est persisté en SQLite au grain de la fenêtre : une recherche
-   interrompue reprend à la ligne en cours, pas au début du fichier. Un sous-titre dont
-   le contenu change (nouvelle release OPUS) voit ses seuls résultats invalidés.
+1. **Download** the subtitles — OPUS *OpenSubtitles* corpus, language `en`, format `raw`
+   (non-tokenized XML), via [`opustools`](https://pypi.org/project/opustools/). The archive
+   is never extracted: subtitles are read from it on the fly.
+2. **Resolve titles** — subtitles are classified by IMDb identifier, and the official
+   IMDb datasets join directly on that identifier: title, type (movie / series /
+   episode), year, adult flag, episode → series relationship. Offline, no API key.
+3. **Search** — a YAML manifest describes the prompt, the Ollama model, the selection
+   filters, and the expected output schema. Each subtitle is split into sliding chunks
+   of N sentences; each chunk yields one call to the model.
+4. **Resume** — state is persisted in SQLite at chunk granularity: an interrupted search
+   resumes at the current line, not at the start of the file. A subtitle whose content
+   changes (new OPUS release) has only its own results invalidated.
 
 ## Installation
 
 ```bash
-pip install uv          # une fois, si uv n'est pas déjà présent
-uv sync --all-extras    # crée le venv, résout et installe tout
+pip install uv          # once, if uv isn't already present
+uv sync --all-extras    # creates the venv, resolves and installs everything
 ```
 
-Copier `.env.example` en `.env` et ajuster `GLYPHWELL_DATA_DIR` : l'archive anglaise
-complète pèse **35,8 Go** pour la release `v2024`.
+Copy `.env.example` to `.env` and adjust `GLYPHWELL_DATA_DIR`: the full English archive
+weighs **35.8 GB** for the `v2024` release.
 
-## Démarrage rapide
+## Quick start
 
-Deux commandes suffisent à récupérer le corpus :
+Two commands are enough to fetch the corpus:
 
 ```bash
-uv run glyphwell db init                      # crée la base
-uv run glyphwell corpus fetch --language en   # télécharge l'archive OpenSubtitles
+uv run glyphwell db init                      # creates the database
+uv run glyphwell corpus fetch --language en   # downloads the OpenSubtitles archive
 ```
 
-`fetch` annonce l'URL et la taille avant d'engager quoi que ce soit, puis affiche le
-volume, le débit et le temps restant :
+`fetch` announces the URL and size before committing to anything, then displays the
+volume, throughput, and remaining time:
 
 ```
-Archive OPUS : https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/raw/en.zip
-Release v2024, langue en, préprocessing raw — environ 35.8 GB
-Destination : data\corpus
-téléchargement ━━━━━━━━━━━━━━━━━━ 4.2/35.8 GB 18.4 MB/s 0:28:31
+OPUS archive: https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2024/raw/en.zip
+Release v2024, language en, preprocessing raw — about 35.8 GB
+Destination: data\corpus
+downloading ━━━━━━━━━━━━━━━━━━ 4.2/35.8 GB 18.4 MB/s 0:28:31
 ```
 
-Coupé en route ? Relancez la même commande : le téléchargement reprend à l'octet où il
-s'était arrêté. À l'arrivée, l'archive est ouverte et son contenu résumé — sans jamais être
-décompressée :
+Interrupted partway through? Rerun the same command: the download resumes at the byte
+where it left off. On arrival, the archive is opened and its contents summarized —
+without ever being extracted:
 
 ```
  Archive              data\corpus\OpenSubtitles_v2024_raw_en.zip
- Taille               35.8 GB
- Empreinte            83279cfd5aab4bfcc54654134e35c5846027241b7a72f01774f102a815797d5c
- Sous-titres          …
- Fichiers de service  3
-Arborescence interne :
+ Size                 35.8 GB
+ Checksum             83279cfd5aab4bfcc54654134e35c5846027241b7a72f01774f102a815797d5c
+ Subtitles            …
+ Service files        3
+Internal layout:
   OpenSubtitles/raw/en/2022/1596342/1957893755.xml
   …
 ```
 
-Pour valider toute la chaîne en quelques secondes plutôt qu'en quelques heures, essayez
-d'abord sur un petit corpus OPUS :
+To validate the whole chain in seconds rather than hours, first try it on a small OPUS
+corpus:
 
 ```bash
 uv run glyphwell corpus fetch --corpus Books --language en --version latest
 ```
 
-## Commandes
+## Commands
 
-Toutes les commandes passent par `uv run`.
+All commands go through `uv run`.
 
 ```bash
-# Base de données
-uv run glyphwell db init                  # crée le schéma
-uv run glyphwell db status                # version du schéma + compteurs
+# Database
+uv run glyphwell db init                  # creates the schema
+uv run glyphwell db status                # schema version + counters
 uv run glyphwell db vacuum
 
-# Corpus de sous-titres
-uv run glyphwell corpus fetch --language en          # téléchargement OPUS
-uv run glyphwell corpus index                        # scan de l'archive -> SQLite
-uv run glyphwell corpus refresh                      # re-hash + invalidation ciblée
+# Subtitle corpus
+uv run glyphwell corpus fetch --language en          # OPUS download
+uv run glyphwell corpus index                        # archive scan -> SQLite
+uv run glyphwell corpus refresh                      # re-hash + targeted invalidation
 
-# Métadonnées des titres
-uv run glyphwell metadata fetch-imdb                 # datasets IMDb officiels
-uv run glyphwell metadata import-imdb                # import en SQLite
+# Title metadata
+uv run glyphwell metadata fetch-imdb                 # official IMDb datasets
+uv run glyphwell metadata import-imdb                # import into SQLite
 
-# Recherche
+# Search
 uv run glyphwell search run searches/example.yaml
 uv run glyphwell search status
 uv run glyphwell search resume 1
 uv run glyphwell search export 1 --format jsonl
 ```
 
-## Écrire une recherche
+## Writing a search
 
-Un manifeste YAML, versionnable et hashé — toute modification du fichier crée une
-nouvelle recherche au lieu de réutiliser des résultats obsolètes. Voir
-[`searches/example.yaml`](searches/example.yaml), entièrement commenté.
+A YAML manifest, version-controllable and hashed — any change to the file creates a new
+search instead of reusing stale results. See
+[`searches/example.yaml`](searches/example.yaml), fully commented.
 
 ## Documentation
 
-La documentation détaillée vit dans [`doc/`](doc/index.md) :
+Detailed documentation lives in [`doc/`](doc/index.md):
 
-- [installation.md](doc/installation.md) — `uv`, prérequis, espace disque
-- [configuration.md](doc/configuration.md) — variables `GLYPHWELL_*`, arborescence de `data/`
-- [corpus.md](doc/corpus.md) — l'étape 1 en détail : releases, reprise, arborescence
-  interne de l'archive, traçabilité, dépannage
+- [installation.md](doc/installation.md) — `uv`, prerequisites, disk space
+- [configuration.md](doc/configuration.md) — `GLYPHWELL_*` variables, `data/` layout
+- [corpus.md](doc/corpus.md) — step 1 in detail: releases, resumption, internal
+  layout of the archive, traceability, troubleshooting
 
-## Développement
+## Development
 
 ```bash
 uv run pytest -q
@@ -119,16 +118,16 @@ uv run mypy
 uv run pre-commit install
 ```
 
-Le projet est typé de bout en bout et vérifié par mypy en mode très strict
-(`strict` + `disallow_any_explicit` + `disallow_any_unimported`). Les conventions
-sont détaillées dans [CLAUDE.md](CLAUDE.md).
+The project is typed end to end and checked by mypy in very strict mode
+(`strict` + `disallow_any_explicit` + `disallow_any_unimported`). Conventions
+are detailed in [CLAUDE.md](CLAUDE.md).
 
-## État
+## Status
 
-Le squelette est en place — packaging, schéma SQLite, CLI, chargement des manifestes,
-outillage qualité — et **l'étape 1 est opérationnelle** : `glyphwell corpus fetch`
-télécharge, reprend, vérifie et trace l'archive OpenSubtitles.
+The skeleton is in place — packaging, SQLite schema, CLI, manifest loading, quality
+tooling — and **step 1 is operational**: `glyphwell corpus fetch` downloads, resumes,
+verifies, and tracks the OpenSubtitles archive.
 
-Le reste de la logique métier (indexation de l'archive, import des datasets IMDb, moteur de
-recherche) est présent sous forme de stubs typés — voir la section « Périmètre actuel » de
+The rest of the business logic (archive indexing, IMDb dataset import, search engine)
+is present in the form of typed stubs — see the "Current scope" section of
 [CLAUDE.md](CLAUDE.md).

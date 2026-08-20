@@ -1,6 +1,6 @@
-"""Sous-commandes ``glyphwell corpus``.
+"""Subcommands ``glyphwell corpus``.
 
-STATUT : ``fetch`` est opérationnelle ; ``index`` et ``refresh`` restent en attente.
+STATUS: ``fetch`` is operational; ``index`` and ``refresh`` remain pending.
 """
 
 from pathlib import Path
@@ -44,7 +44,7 @@ from glyphwell.types import Sha256
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Téléchargement, indexation et rafraîchissement du corpus de sous-titres.",
+    help="Download, indexing and refreshing of the subtitle corpus.",
     no_args_is_help=True,
 )
 
@@ -56,34 +56,36 @@ def fetch(
     ctx: typer.Context,
     language: Annotated[
         str | None,
-        typer.Option("--language", "-l", help="Code de langue OPUS. Défaut : celui du .env"),
+        typer.Option("--language", "-l", help="OPUS language code. Default: the one from .env"),
     ] = None,
     version: Annotated[
         str,
-        typer.Option("--version", help="Release OPUS visée."),
+        typer.Option("--version", help="Target OPUS release."),
     ] = DEFAULT_VERSION,
     corpus_name: Annotated[
         str,
-        typer.Option("--corpus", help="Nom du corpus OPUS."),
+        typer.Option("--corpus", help="Name of the OPUS corpus."),
     ] = DEFAULT_CORPUS,
     dest: Annotated[
         Path | None,
-        typer.Option("--dest", help="Répertoire où déposer l'archive. Défaut : <data-dir>/corpus"),
+        typer.Option(
+            "--dest", help="Directory to store the archive in. Default: <data-dir>/corpus"
+        ),
     ] = None,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Re-télécharge même si l'archive est déjà présente."),
+        typer.Option("--force", help="Re-downloads even if the archive is already present."),
     ] = False,
     compute_hash: Annotated[
         bool,
-        typer.Option("--hash", help="Calcule l'empreinte même si le transfert n'a pas eu lieu."),
+        typer.Option("--hash", help="Computes the checksum even if no transfer took place."),
     ] = False,
 ) -> None:
-    """Télécharge le corpus (format `raw`, une seule langue).
+    """Downloads the corpus (`raw` format, a single language).
 
-    L'archive n'est **pas** décompressée : elle est le corpus, et les sous-titres en sont
-    lus à la volée. Prévoir plusieurs dizaines de Go pour l'anglais complet. Un
-    téléchargement interrompu reprend là où il s'était arrêté.
+    The archive is **not** decompressed: it is the corpus, and subtitles are read from
+    it on the fly. Expect several tens of GB for the full English corpus. An
+    interrupted download resumes where it left off.
     """
     settings = get_context(ctx).settings
     settings.ensure_directories()
@@ -114,18 +116,18 @@ def fetch(
 
 
 def _announce(record: OpusFileRecord, *, dest_dir: Path) -> None:
-    """Affiche ce sur quoi l'utilisateur s'engage, avant tout transfert."""
-    console.print(f"Archive OPUS : [bold]{record.url}[/bold]")
+    """Displays what the user is committing to, before any transfer."""
+    console.print(f"OPUS archive: [bold]{record.url}[/bold]")
     console.print(
-        f"Release [bold]{record.version}[/bold], langue [bold]{record.source}[/bold],"
-        f" préprocessing [bold]{record.preprocessing}[/bold] —"
-        f" environ {decimal(record.size * 1024)}"
+        f"Release [bold]{record.version}[/bold], language [bold]{record.source}[/bold],"
+        f" preprocessing [bold]{record.preprocessing}[/bold] —"
+        f" about {decimal(record.size * 1024)}"
     )
-    console.print(f"Destination : {dest_dir}")
+    console.print(f"Destination: {dest_dir}")
 
 
 def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusDownload:
-    """Télécharge l'archive en affichant volume, débit et temps restant."""
+    """Downloads the archive, showing volume, throughput and remaining time."""
     with Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
@@ -134,9 +136,9 @@ def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusD
         TimeRemainingColumn(),
         console=console,
     ) as progress:
-        # `total=None` tant que les en-têtes n'ont pas été lus : la barre reste
-        # indéterminée plutôt que d'afficher un pourcentage inventé.
-        task = progress.add_task("téléchargement", total=None)
+        # `total=None` until the headers have been read: the bar stays indeterminate
+        # rather than showing a made-up percentage.
+        task = progress.add_task("downloading", total=None)
 
         def on_progress(received: int, total: int | None) -> None:
             progress.update(task, completed=received, total=total)
@@ -153,57 +155,57 @@ def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusD
 
 
 def _verify(archive_path: Path) -> ArchiveSummary:
-    """Ouvre l'archive et décrit son contenu, sans rien extraire."""
+    """Opens the archive and describes its content, without extracting anything."""
     with CorpusArchive(archive_path) as archive:
         return archive.summarize()
 
 
 def _resolve_hash(result: CorpusDownload, *, compute_hash: bool) -> Sha256 | None:
-    """Empreinte de l'archive, calculée au vol ou sur demande explicite.
+    """Archive checksum, computed on the fly or on explicit request.
 
-    Une passe complète sur plusieurs dizaines de Go dure plusieurs minutes : elle ne se
-    déclenche pas d'elle-même quand le transfert n'a pas pu la produire gratuitement.
+    A full pass over several tens of GB takes several minutes: it does not trigger
+    on its own when the transfer could not produce it for free.
     """
     if result.sha256 is not None or not compute_hash:
         return result.sha256
 
-    console.print("Calcul de l'empreinte…")
+    console.print("Computing checksum…")
     return sha256_file(result.archive_path)
 
 
 def _report(result: CorpusDownload, *, summary: ArchiveSummary, sha256: Sha256 | None) -> None:
-    """Récapitule l'acquisition."""
+    """Summarizes the acquisition."""
     table = Table(show_header=False, box=None)
-    table.add_column("Champ", style="bold")
-    table.add_column("Valeur")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
     table.add_row("Archive", str(result.archive_path))
-    table.add_row("Taille", decimal(result.archive_path.stat().st_size))
-    table.add_row("Empreinte", sha256 or "non calculée (--hash pour la forcer)")
-    table.add_row("Sous-titres", f"{summary.subtitle_count:,}".replace(",", " "))
+    table.add_row("Size", decimal(result.archive_path.stat().st_size))
+    table.add_row("Checksum", sha256 or "not computed (use --hash to force it)")
+    table.add_row("Subtitles", f"{summary.subtitle_count:,}".replace(",", " "))
     if summary.metadata_count:
-        # Les archives OPUS embarquent INFO / README / LICENSE : dit une fois, sans alarme.
-        table.add_row("Fichiers de service", str(summary.metadata_count))
+        # OPUS archives embed INFO / README / LICENSE: mentioned once, without alarm.
+        table.add_row("Service files", str(summary.metadata_count))
     console.print(table)
 
     if summary.samples:
-        console.print("Arborescence interne :")
+        console.print("Internal layout:")
         for sample in summary.samples:
             console.print(f"  {sample}")
 
     if summary.unexpected_count:
         console.print(
-            f"[yellow]Attention[/yellow] : {summary.unexpected_count} membre(s) portent une"
-            f" extension inattendue, par exemple {summary.unexpected_samples[0]}."
-            " Ce sont peut-être des sous-titres que glyphwell ne sait pas lire — à vérifier"
-            " avant d'aller plus loin."
+            f"[yellow]Warning[/yellow]: {summary.unexpected_count} member(s) have an"
+            f" unexpected extension, for example {summary.unexpected_samples[0]}."
+            " These might be subtitles that glyphwell cannot read — worth checking"
+            " before going further."
         )
 
 
 def _upsert_pending(settings: Settings, record: OpusFileRecord) -> int:
-    """Enregistre l'acquisition en `pending` avant d'engager le transfert.
+    """Records the acquisition as `pending` before starting the transfer.
 
-    Écrit délibérément *avant* le téléchargement : une base absente doit faire échouer la
-    commande tout de suite, pas après plusieurs dizaines de Go.
+    Deliberately written *before* the download: a missing database must fail the
+    command right away, not after several tens of GB.
     """
     with connect(settings.database_path) as conn:
         ensure_current(conn)
@@ -229,7 +231,7 @@ def _mark(
     archive_path: str | None = None,
     verified: bool = False,
 ) -> None:
-    """Fait avancer la ligne de traçabilité."""
+    """Advances the traceability row."""
     with connect(settings.database_path) as conn:
         CorpusDownloadsRepository(conn).mark(
             download_id,
@@ -245,17 +247,17 @@ def index(
     ctx: typer.Context,
     rehash: Annotated[
         bool,
-        typer.Option("--rehash", help="Recalcule l'empreinte des fichiers déjà catalogués."),
+        typer.Option("--rehash", help="Recomputes the checksum of files already cataloged."),
     ] = False,
     language: Annotated[
         str | None,
-        typer.Option("--language", "-l", help="Restreint le scan à une langue."),
+        typer.Option("--language", "-l", help="Restricts the scan to a single language."),
     ] = None,
 ) -> None:
-    """Parcourt l'archive et alimente la table `subtitle_files`.
+    """Scans the archive and populates the `subtitle_files` table.
 
-    Ne lit pas le contenu des sous-titres : seuls le nom du membre, sa taille et son
-    empreinte sont relevés. Les identifiants IMDb proviennent de l'arborescence interne.
+    Does not read subtitle content: only the member name, its size and its checksum
+    are recorded. IMDb identifiers come from the internal layout.
     """
     settings = get_context(ctx).settings
     _ = (settings, rehash, language)
@@ -267,14 +269,16 @@ def refresh(
     ctx: typer.Context,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Liste ce qui serait invalidé, sans rien écrire."),
+        typer.Option(
+            "--dry-run", help="Lists what would be invalidated, without writing anything."
+        ),
     ] = False,
 ) -> None:
-    """Détecte les sous-titres modifiés et invalide leurs résultats.
+    """Detects modified subtitles and invalidates their results.
 
-    Recalcule l'empreinte de chaque fichier catalogué. Si elle diffère, seuls les résultats
-    de ce fichier sont supprimés et son curseur remis à zéro dans chaque recherche : le reste
-    des recherches est conservé.
+    Recomputes the checksum of each cataloged file. If it differs, only that file's
+    results are deleted and its cursor reset in each search: the rest of the
+    searches are kept.
     """
     settings = get_context(ctx).settings
     _ = (settings, dry_run)

@@ -1,4 +1,4 @@
-# Installation : uv run pre-commit install
+# Installation: uv run pre-commit install
 default_language_version:
   python: python3.12
 
@@ -24,10 +24,10 @@ repos:
 
   - repo: local
     hooks:
-      # mypy tourne en local : il a besoin des dépendances réelles du projet
-      # (pydantic, typer) pour que le mode strict soit exact.
+      # mypy runs locally: it needs the project's real dependencies
+      # (pydantic, typer) for strict mode to be accurate.
       - id: mypy
-        name: mypy (très strict)
+        name: mypy (strict)
         entry: uv run mypy
         language: system
         types: [python]

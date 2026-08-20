@@ -1,4 +1,4 @@
-"""Fixtures partagées."""
+"""Shared fixtures."""
 
 import sqlite3
 import zipfile
@@ -15,23 +15,23 @@ DATA_DIR = Path(__file__).parent / "data"
 
 @pytest.fixture
 def sample_corpus() -> Path:
-    """Racine du mini-corpus fabriqué, respectant l'arborescence OPUS attendue."""
+    """Root of the fabricated mini-corpus, matching the expected OPUS directory tree."""
     return DATA_DIR / "corpus"
 
 
 @pytest.fixture
 def sample_subtitle(sample_corpus: Path) -> Path:
-    """Un fichier de sous-titre d'échantillon."""
+    """A sample subtitle file."""
     return sample_corpus / "en" / "1999" / "0133093" / "3660124.xml"
 
 
 @pytest.fixture
 def sample_archive(tmp_path: Path, sample_subtitle: Path) -> Path:
-    """Archive minimale, à l'image de celle d'OPUS : le zip *est* le corpus.
+    """Minimal archive, modeled after an OPUS one: the zip *is* the corpus.
 
-    Contient un sous-titre valide, une entrée de répertoire, un fichier de service sans
-    extension comme en embarquent les archives OPUS, et un membre à l'extension inattendue
-    — les trois catégories que `CorpusArchive.summarize` doit distinguer.
+    Contains a valid subtitle, a directory entry, an extensionless service file like the
+    ones OPUS archives carry, and a member with an unexpected extension — the three
+    categories that `CorpusArchive.summarize` must distinguish.
     """
     path = tmp_path / "OpenSubtitles_v2018_raw_en.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -40,36 +40,36 @@ def sample_archive(tmp_path: Path, sample_subtitle: Path) -> Path:
             "OpenSubtitles/raw/en/1999/0133093/3660124.xml",
             sample_subtitle.read_text(encoding="utf-8"),
         )
-        archive.writestr("OpenSubtitles/README", "corpus OPUS")
-        archive.writestr("OpenSubtitles/raw/en/1999/0133093/3660125.xml.gz", "compresse")
+        archive.writestr("OpenSubtitles/README", "OPUS corpus")
+        archive.writestr("OpenSubtitles/raw/en/1999/0133093/3660125.xml.gz", "compressed")
     return path
 
 
 @pytest.fixture
 def minimal_manifest() -> Path:
-    """Manifeste réduit aux champs obligatoires."""
+    """Manifest reduced to the required fields."""
     return DATA_DIR / "searches" / "minimal.yaml"
 
 
 @pytest.fixture
 def example_manifest() -> Path:
-    """Le manifeste d'exemple livré avec le projet, qui doit rester valide."""
+    """The example manifest shipped with the project, which must stay valid."""
     return Path(__file__).parent.parent / "searches" / "example.yaml"
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    """Configuration isolée dans un répertoire temporaire.
+    """Configuration isolated in a temporary directory.
 
-    `_env_file=None` neutralise le `.env` du dépôt : un test ne doit pas dépendre de la
-    configuration locale de la machine.
+    `_env_file=None` neutralizes the repo's `.env`: a test must not depend on the local
+    configuration of the machine.
     """
     return Settings(data_dir=tmp_path / "data", _env_file=None)
 
 
 @pytest.fixture
 def db(settings: Settings) -> Iterator[sqlite3.Connection]:
-    """Base temporaire, schéma déjà appliqué."""
+    """Temporary database, schema already applied."""
     with connect(settings.database_path, create=True) as conn:
         initialize(conn)
         yield conn
