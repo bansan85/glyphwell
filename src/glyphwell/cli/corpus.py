@@ -12,6 +12,7 @@ from rich.progress import (
     BarColumn,
     DownloadColumn,
     Progress,
+    TaskID,
     TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
@@ -127,22 +128,32 @@ def _announce(record: OpusFileRecord, *, dest_dir: Path) -> None:
 
 
 def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusDownload:
-    """Downloads the archive, showing volume, throughput and remaining time."""
-    with Progress(
+    """Downloads the archive, showing volume, throughput and remaining time.
+
+    The live display only starts on the first actual progress callback: when the
+    archive is already present, `download_corpus` never calls it, and no bar should
+    appear for a transfer that never happens.
+    """
+    progress = Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
         DownloadColumn(),
         TransferSpeedColumn(),
         TimeRemainingColumn(),
         console=console,
-    ) as progress:
-        # `total=None` until the headers have been read: the bar stays indeterminate
-        # rather than showing a made-up percentage.
-        task = progress.add_task("downloading", total=None)
+    )
+    task: TaskID | None = None
 
-        def on_progress(received: int, total: int | None) -> None:
-            progress.update(task, completed=received, total=total)
+    def on_progress(received: int, total: int | None) -> None:
+        nonlocal task
+        if task is None:
+            progress.start()
+            # `total=None` until the headers have been read: the bar stays
+            # indeterminate rather than showing a made-up percentage.
+            task = progress.add_task("downloading", total=None)
+        progress.update(task, completed=received, total=total)
 
+    try:
         return download_corpus(
             dest_dir=dest_dir,
             corpus=record.corpus,
@@ -152,6 +163,9 @@ def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusD
             record=record,
             progress=on_progress,
         )
+    finally:
+        if task is not None:
+            progress.stop()
 
 
 def _verify(archive_path: Path) -> ArchiveSummary:
