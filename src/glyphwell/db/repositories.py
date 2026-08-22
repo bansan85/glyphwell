@@ -5,8 +5,9 @@ translate SQLite rows into value objects. This is also the only place where the 
 invariants translate into queries (``INSERT OR IGNORE``, deterministic ordering, one
 transaction per chunk).
 
-STATUS: `CorpusDownloadsRepository` is implemented; the rest is still stubs, whose
-signatures and value objects are final (see "Current scope" in CLAUDE.md).
+STATUS: `CorpusDownloadsRepository`, `TitlesRepository`, and `ImportsRepository` are
+implemented; the rest is still stubs, whose signatures and value objects are final (see
+"Current scope" in CLAUDE.md).
 """
 
 import sqlite3
@@ -27,7 +28,11 @@ __all__ = [
     "CorpusDownloadRow",
     "CorpusDownloadsRepository",
     "DownloadStatus",
+    "EpisodeLink",
     "FileStatus",
+    "ImportRow",
+    "ImportSource",
+    "ImportsRepository",
     "ResultRow",
     "ResultsRepository",
     "RunFileRow",
@@ -77,6 +82,13 @@ class DownloadStatus(StrEnum):
     FAILED = "failed"
 
 
+class ImportSource(StrEnum):
+    """Which IMDb dataset an `imports` row traces."""
+
+    BASICS = "imdb_basics"
+    EPISODE = "imdb_episode"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TitleRow:
     """A row of `titles`."""
@@ -90,6 +102,22 @@ class TitleRow:
     is_adult: bool
     runtime_minutes: int | None
     parent_imdb_id: ImdbId | None
+    season_number: int | None
+    episode_number: int | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EpisodeLink:
+    """An episode's attachment to its series, as carried by ``title.episode.tsv``.
+
+    Deliberately separate from `TitleRow`: attaching an episode only ever touches three
+    columns of an already-existing row. Routing it through `TitleRow` and `upsert_many`
+    would force every other column — starting with the non-nullable `is_adult` — back to
+    a default, silently erasing what `import_basics` had already written.
+    """
+
+    imdb_id: ImdbId
+    parent_imdb_id: ImdbId
     season_number: int | None
     episode_number: int | None
 
@@ -174,6 +202,21 @@ class CorpusDownloadRow:
     verified_at: str | None = None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportRow:
+    """A row of `imports`: traceability of an IMDb dataset import.
+
+    `import_id` is `None` until the row has been written, mirroring `CorpusDownloadRow`.
+    """
+
+    import_id: int | None = None
+    source: ImportSource
+    file_name: str
+    released_at: str | None = None
+    row_count: int | None = None
+    imported_at: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class TitlesRepository:
     """Reading and writing `titles`."""
@@ -182,15 +225,77 @@ class TitlesRepository:
 
     def get(self, imdb_id: ImdbId) -> TitleRow | None:
         """Returns the title, or `None` if it has not been imported."""
-        raise NotImplementedError
+        found = self.conn.execute("SELECT * FROM titles WHERE imdb_id = ?", (imdb_id,)).fetchone()
+        return None if found is None else _to_title_row(found)
 
     def upsert_many(self, rows: Sequence[TitleRow]) -> int:
-        """Inserts or updates a batch of titles, and returns the number of rows written."""
-        raise NotImplementedError
+        """Inserts or updates a batch of titles, and returns the number of rows written.
+
+        Used by `import_basics`, which always carries authoritative values for every
+        column it knows about. A column left `None` (the parent link, filled in later by
+        `import_episodes`) is preserved rather than overwritten with `NULL`, via the same
+        ``coalesce(excluded, ...)`` pattern as `CorpusDownloadsRepository.upsert`.
+        """
+        if not rows:
+            return 0
+        cursor = self.conn.executemany(
+            "INSERT INTO titles"
+            " (imdb_id, title_type, primary_title, original_title, start_year, end_year,"
+            "  is_adult, runtime_minutes, parent_imdb_id, season_number, episode_number)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (imdb_id) DO UPDATE SET"
+            "     title_type = coalesce(excluded.title_type, titles.title_type),"
+            "     primary_title = coalesce(excluded.primary_title, titles.primary_title),"
+            "     original_title = coalesce(excluded.original_title, titles.original_title),"
+            "     start_year = coalesce(excluded.start_year, titles.start_year),"
+            "     end_year = coalesce(excluded.end_year, titles.end_year),"
+            "     is_adult = excluded.is_adult,"
+            "     runtime_minutes = coalesce(excluded.runtime_minutes, titles.runtime_minutes),"
+            "     parent_imdb_id = coalesce(excluded.parent_imdb_id, titles.parent_imdb_id),"
+            "     season_number = coalesce(excluded.season_number, titles.season_number),"
+            "     episode_number = coalesce(excluded.episode_number, titles.episode_number)",
+            [
+                (
+                    row.imdb_id,
+                    row.title_type,
+                    row.primary_title,
+                    row.original_title,
+                    row.start_year,
+                    row.end_year,
+                    int(row.is_adult),
+                    row.runtime_minutes,
+                    row.parent_imdb_id,
+                    row.season_number,
+                    row.episode_number,
+                )
+                for row in rows
+            ],
+        )
+        return cursor.rowcount
+
+    def set_episode_links_many(self, links: Sequence[EpisodeLink]) -> int:
+        """Attaches episodes to their series, and returns the number of rows updated.
+
+        A plain ``UPDATE``, not an upsert: the episode's own row must already exist —
+        `import_episodes` runs after `import_basics` for exactly that reason. This also
+        keeps the write from touching any other column of `titles` (see `EpisodeLink`).
+        """
+        if not links:
+            return 0
+        cursor = self.conn.executemany(
+            "UPDATE titles SET parent_imdb_id = ?, season_number = ?, episode_number = ?"
+            " WHERE imdb_id = ?",
+            [
+                (link.parent_imdb_id, link.season_number, link.episode_number, link.imdb_id)
+                for link in links
+            ],
+        )
+        return cursor.rowcount
 
     def count(self) -> int:
         """Number of known titles."""
-        raise NotImplementedError
+        found = self.conn.execute("SELECT COUNT(*) AS n FROM titles").fetchone()
+        return int(found["n"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,4 +551,57 @@ def _to_download_row(row: sqlite3.Row) -> CorpusDownloadRow:
         status=DownloadStatus(row["status"]),
         downloaded_at=None if row["downloaded_at"] is None else str(row["downloaded_at"]),
         verified_at=None if row["verified_at"] is None else str(row["verified_at"]),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ImportsRepository:
+    """Traceability of IMDb dataset imports, one row per completed `import_basics` or
+    `import_episodes` run.
+    """
+
+    conn: sqlite3.Connection
+
+    def record(self, row: ImportRow) -> int:
+        """Logs a completed import and returns its `import_id`."""
+        cursor = self.conn.execute(
+            "INSERT INTO imports (source, file_name, released_at, row_count) VALUES (?, ?, ?, ?)",
+            (row.source.value, row.file_name, row.released_at, row.row_count),
+        )
+        return int(cursor.lastrowid) if cursor.lastrowid is not None else 0
+
+    def iter_all(self) -> Iterator[ImportRow]:
+        """All imports, from most recent to oldest."""
+        for found in self.conn.execute(
+            "SELECT * FROM imports ORDER BY imported_at DESC, import_id DESC"
+        ):
+            yield _to_import_row(found)
+
+
+def _to_title_row(row: sqlite3.Row) -> TitleRow:
+    """Translates a row of `titles`."""
+    return TitleRow(
+        imdb_id=str(row["imdb_id"]),
+        title_type=None if row["title_type"] is None else str(row["title_type"]),
+        primary_title=None if row["primary_title"] is None else str(row["primary_title"]),
+        original_title=None if row["original_title"] is None else str(row["original_title"]),
+        start_year=None if row["start_year"] is None else int(row["start_year"]),
+        end_year=None if row["end_year"] is None else int(row["end_year"]),
+        is_adult=bool(row["is_adult"]),
+        runtime_minutes=None if row["runtime_minutes"] is None else int(row["runtime_minutes"]),
+        parent_imdb_id=None if row["parent_imdb_id"] is None else str(row["parent_imdb_id"]),
+        season_number=None if row["season_number"] is None else int(row["season_number"]),
+        episode_number=None if row["episode_number"] is None else int(row["episode_number"]),
+    )
+
+
+def _to_import_row(row: sqlite3.Row) -> ImportRow:
+    """Translates a row of `imports`."""
+    return ImportRow(
+        import_id=int(row["import_id"]),
+        source=ImportSource(row["source"]),
+        file_name=str(row["file_name"]),
+        released_at=None if row["released_at"] is None else str(row["released_at"]),
+        row_count=None if row["row_count"] is None else int(row["row_count"]),
+        imported_at=None if row["imported_at"] is None else str(row["imported_at"]),
     )

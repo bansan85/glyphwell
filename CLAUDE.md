@@ -182,10 +182,52 @@ IMDb datasets already give exactly.
   `seasonNumber`, `episodeNumber`.
 - TSV, **`\N` = null value** (not an empty string). Direct join on `tconst`,
   100% offline, no API key. Refreshed daily by IMDb.
+- **Not CSV-quoted — read with `csv.QUOTE_NONE`.** About 5 500 rows of `title.basics`
+  have a `primaryTitle` that literally starts with `"` (e.g. `"Giliap"`, a real 1975
+  film). Python's default `csv` dialect treats a leading `"` as opening a quoted field
+  and silently strips it; both readers below disable that with `quoting=csv.QUOTE_NONE`.
+- **`csv.reader`, not `DictReader` — and `import_basics`/`import_episodes` don't even go
+  through `iter_rows`.** Measured on the real `title.basics.tsv` (12.7M rows):
+  `DictReader`'s per-row bookkeeping for ragged rows (`restkey`/`restval`) that every
+  real row never needs was already a third of the import's wall-clock time; `iter_rows`
+  fixes that with a plain `csv.reader` and `zip(fieldnames, values, strict=True)`
+  (raising a clear `MetadataError` on a malformed row instead of `DictReader` silently
+  padding it with `None`). But building and discarding a `dict` for every row was, on
+  top of that, close to *half* the remaining time — `import_basics`/`import_episodes`
+  don't need a dict, only a `TitleRow`/`EpisodeLink`. They read positionally instead
+  (column indices resolved once against the header, then straight into the dataclass),
+  bypassing `iter_rows` entirely. `iter_rows` itself is kept as a generic, tested,
+  dict-shaped reader for any other future consumer — it's simply no longer on the hot
+  path of these two functions. Batch size matters too: raising it from an initial
+  10 000 to 50 000 rows per transaction cut wall-clock time by about another 25% (fewer
+  WAL commits). Combined, throughput on SSD-backed storage went from ~11 400 rows/s to
+  ~50 000-70 000 rows/s.
+- **Import throughput is largely disk-bound, and no amount of the above fixes that.**
+  On the same code, a mechanical (HDD) disk measured at ~9 700 rows/s — barely above the
+  *pre-optimization* baseline — against ~50 000-70 000 rows/s on SSD-backed storage for
+  the identical workload. If `import-imdb` is slow, check where `--database` /
+  `GLYPHWELL_DATABASE` points before touching the code again; see
+  [doc/metadata.md#performance](doc/metadata.md#performance).
 
 What the IMDb datasets don't give: any popularity measure. If a filter like that becomes
 necessary, the IMDb-native route is `title.ratings.tsv.gz` (`averageRating`, `numVotes`),
 also indexed by `tconst` — not a third-party source.
+
+- **Two-pass import, not a single upsert.** `import_basics` never knows an episode's
+  parent/season/episode (that only exists in `title.episode.tsv`), and `import_episodes`
+  never knows the rest of a title's columns — including the non-nullable `is_adult`.
+  `TitlesRepository.upsert_many` (used by `import_basics`) coalesces every nullable column
+  so a re-import can't blank out a link written by `import_episodes`; the reverse direction
+  goes through the dedicated `set_episode_links_many` (a plain `UPDATE`, not an upsert) so
+  it never has to invent a value for `is_adult`. `import_episodes` must run after
+  `import_basics`: an episode's own row has to exist already, since `set_episode_links_many`
+  only updates, never inserts.
+- `download()` for these files has no resume support, unlike `corpus/opus.py`: at a few
+  hundred MB each, restarting from zero on failure is cheap enough that a `.part` +
+  `Range` dance isn't worth it here.
+- `import-imdb --source-dir` accepts either the `.tsv.gz` `download()` produces or an
+  already-decompressed `.tsv` (`locate_dataset` tries both) — useful for anyone who grabbed
+  the datasets by hand from IMDb's own download page, which serves them decompressed.
 
 ### Volume
 
@@ -241,7 +283,8 @@ only the catalog and progress state live there. Schema declared in
 
 ## 9. Current scope
 
-The skeleton is in place, and **step 1 is operational**.
+The skeleton is in place, and **step 1 is operational**. Title resolution (step 2) is now
+operational too.
 
 **Operational**: packaging, configuration, logging, SQLite schema and migrations
 (`db init` produces a valid database), full CLI wiring, YAML manifest loading + validation
@@ -249,31 +292,35 @@ The skeleton is in place, and **step 1 is operational**.
 the OPUS index ([corpus/opus.py](src/glyphwell/corpus/opus.py)), resumable download,
 archive reading without extraction
 ([corpus/archive.py](src/glyphwell/corpus/archive.py)), traceability in `corpus_downloads`
-(`CorpusDownloadsRepository`, the only repository implemented so far).
+(`CorpusDownloadsRepository`). Also operational: `glyphwell metadata fetch-imdb` and
+`import-imdb` — downloading and importing the two IMDb datasets
+([metadata/imdb_datasets.py](src/glyphwell/metadata/imdb_datasets.py)) and resolving an
+`imdb_id` to a `Title`, episode-to-series link included
+([metadata/resolver.py](src/glyphwell/metadata/resolver.py)), backed by
+`TitlesRepository` and `ImportsRepository` in
+[db/repositories.py](src/glyphwell/db/repositories.py).
 
 **Typed stubs** (`raise NotImplementedError`, signatures already complete and passing
-strict mypy) — 68 entry points spread across 16 modules:
+strict mypy) — 56 entry points spread across 13 modules:
 
 | Module | To implement |
 |---|---|
-| [cli/corpus.py](src/glyphwell/cli/corpus.py), [cli/metadata.py](src/glyphwell/cli/metadata.py), [cli/search.py](src/glyphwell/cli/search.py) | control unit (wiring already done) |
+| [cli/corpus.py](src/glyphwell/cli/corpus.py), [cli/search.py](src/glyphwell/cli/search.py) | control unit (wiring already done) — `cli/metadata.py` is fully implemented |
 | [manifest/prefilter.py](src/glyphwell/manifest/prefilter.py) | Compilation and application of the pattern prefilter |
 | [corpus/layout.py](src/glyphwell/corpus/layout.py) | parsing the member name, normalizing the imdb_id |
 | [corpus/reader.py](src/glyphwell/corpus/reader.py) | streaming XML reading into `Sentence` |
 | [corpus/chunker.py](src/glyphwell/corpus/chunker.py) | sliding size/overlap chunking |
-| [metadata/imdb_datasets.py](src/glyphwell/metadata/imdb_datasets.py) | download + TSV import |
-| [metadata/resolver.py](src/glyphwell/metadata/resolver.py) | imdb_id to `Title` |
 | [ollama/client.py](src/glyphwell/ollama/client.py) | model call, retries, JSON output |
 | [ollama/prompts.py](src/glyphwell/ollama/prompts.py) | rendering the manifest's templates |
 | [search/planner.py](src/glyphwell/search/planner.py) | building the work queue |
 | [search/engine.py](src/glyphwell/search/engine.py) | loop, concurrency, clean shutdown |
 | [search/checkpoint.py](src/glyphwell/search/checkpoint.py) | reading/writing the cursor |
 | [search/results.py](src/glyphwell/search/results.py) | output validation, export |
-| [db/repositories.py](src/glyphwell/db/repositories.py) | typed access to the tables, other than `corpus_downloads` |
+| [db/repositories.py](src/glyphwell/db/repositories.py) | `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, `ResultsRepository` — `TitlesRepository`, `ImportsRepository`, and `CorpusDownloadsRepository` are done |
 
 Suggested order of attack: `corpus/layout.py`, `corpus/reader.py`, and `corpus/chunker.py`
-(pure functions, testable without network access), then `db/repositories.py`, then
-`metadata/imdb_datasets.py`, and finally `search/` together with `ollama/`.
+(pure functions, testable without network access), then the remaining `db/repositories.py`
+entries, and finally `search/` together with `ollama/`.
 
 Three decisions from step 1 constrain what comes next:
 

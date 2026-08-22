@@ -108,6 +108,8 @@ Detailed documentation lives in [`doc/`](doc/index.md):
 - [configuration.md](doc/configuration.md) — `GLYPHWELL_*` variables, `data/` layout
 - [corpus.md](doc/corpus.md) — step 1 in detail: releases, resumption, internal
   layout of the archive, traceability, troubleshooting
+- [metadata.md](doc/metadata.md) — step 2 in detail: fetching and importing the IMDb
+  datasets, the two-pass import, traceability, performance, troubleshooting
 
 ## Development
 
@@ -125,9 +127,9 @@ are detailed in [CLAUDE.md](CLAUDE.md).
 ## Status
 
 The skeleton is in place — packaging, SQLite schema, CLI, manifest loading, quality
-tooling — and **step 1 is operational**: `glyphwell corpus fetch` downloads, resumes,
-verifies, and tracks the OpenSubtitles archive.
+tooling — and **steps 1 and 2 are operational**: `glyphwell corpus fetch` downloads,
+resumes, verifies, and tracks the OpenSubtitles archive, and `glyphwell metadata
+fetch-imdb` / `import-imdb` download and import the IMDb datasets and resolve titles.
 
-The rest of the business logic (archive indexing, IMDb dataset import, search engine)
-is present in the form of typed stubs — see the "Current scope" section of
-[CLAUDE.md](CLAUDE.md).
+The rest of the business logic (archive indexing, search engine) is present in the form
+of typed stubs — see the "Current scope" section of [CLAUDE.md](CLAUDE.md).

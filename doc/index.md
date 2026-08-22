@@ -10,6 +10,7 @@ locally by Ollama.
 | [installation.md](installation.md) | Install `uv`, the environment, and size the disk. |
 | [configuration.md](configuration.md) | `GLYPHWELL_*` variables, `data/` layout. |
 | [corpus.md](corpus.md) | **Step 1**: fetch the OpenSubtitles archive and read it. |
+| [metadata.md](metadata.md) | **Step 2**: fetch and import the IMDb datasets, resolve titles. |
 
 ## The four-step pipeline
 
@@ -19,6 +20,7 @@ locally by Ollama.
 2. **Resolve titles.** Subtitles are classified by IMDb identifier; the official IMDb
    datasets join directly on it and give the title, the type (movie / series / episode),
    the year, and the episode → series relationship. Offline, no API key.
+   → [metadata.md](metadata.md)
 3. **Search.** A YAML manifest describes the prompt, the Ollama model, the selection
    filters, and the expected output schema. Each subtitle is split into sliding chunks
    of N sentences; each chunk yields one call to the model.
@@ -27,14 +29,14 @@ locally by Ollama.
 
 ## Progress status
 
-Only step 1 is operational so far.
+Steps 1 and 2 are operational so far.
 
 | Capability | Status |
 |---|---|
 | `glyphwell db init` / `status` / `vacuum` | operational |
 | `glyphwell corpus fetch` | **operational** |
 | `glyphwell corpus index` / `refresh` | to implement |
-| `glyphwell metadata fetch-imdb` / `import-imdb` | to implement |
+| `glyphwell metadata fetch-imdb` / `import-imdb` | **operational** |
 | `glyphwell search run` / `resume` / `status` / `export` | to implement |
 
 Commands not yet implemented are wired into the CLI and already expose their help: their

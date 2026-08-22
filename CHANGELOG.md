@@ -68,11 +68,46 @@ below sit under `Unreleased`.
 - `glyphwell.console` exposes the single Rich `Console` shared by the commands and by the
   logging handler.
 
+#### Title resolution
+
+- `glyphwell metadata fetch-imdb` and `import-imdb` are operational end to end:
+  `fetch-imdb` downloads `title.basics.tsv.gz` and `title.episode.tsv.gz` from the
+  official IMDb datasets (no API key, republished daily — ADR-0003); `import-imdb`
+  imports them into `titles`, episodes after base titles, and accepts `--source-dir` to
+  point at datasets already downloaded and decompressed by hand.
+- `metadata/imdb_datasets.py`: `download` (plain streamed download, no resume — these
+  files are a few hundred MB at most, unlike the OPUS archive); `locate_dataset` (finds
+  either the `.tsv.gz` `download` produces or an already-decompressed `.tsv`); `iter_rows`
+  (generic TSV reader, `\N` converted to `None`); `import_basics` and `import_episodes`
+  (batched, one transaction per batch of 50 000 rows).
+- `metadata/resolver.py`: `Title` (with `display_name()`, e.g. `"Series S01E02 — Title
+  (year)"`), the `TitleProvider` protocol, and `SqliteTitleProvider`, which resolves an
+  `imdb_id` to a `Title` — including, for an episode, its parent series' title.
+- `TitlesRepository` (`get`, `upsert_many`, `set_episode_links_many`, `count`) and
+  `ImportsRepository` (traceability of each completed import, one row per pass) in
+  `db/repositories.py`. See *Two-pass import* below for why writing an episode's link is
+  a distinct operation from writing a title's base columns (ADR-0010).
+- **Two-pass import, not a single upsert (ADR-0010).** `import_basics` never knows an
+  episode's parent/season/episode, and `import_episodes` never knows the rest of a
+  title's columns, including the non-nullable `is_adult`. `TitlesRepository.upsert_many`
+  (used only by `import_basics`) coalesces every nullable column so a re-import can't
+  blank out a link written by `import_episodes`; the reverse direction goes through
+  `set_episode_links_many` (a plain `UPDATE`, not an upsert), which never has to invent a
+  value for a column it doesn't have.
+- **Performance.** `import_basics`/`import_episodes` read the TSVs positionally
+  (`csv.reader`, header resolved once) straight into `TitleRow`/`EpisodeLink`, instead of
+  through `csv.DictReader` and a per-row `dict`. Measured on the real `title.basics.tsv`
+  (12.7M rows): building and discarding a dict for every row was close to half of the
+  total wall-clock time. Combined with a larger batch size (50 000 rows/transaction, up
+  from an initial 10 000), throughput went from ~11 400 rows/s to ~50-70 000 rows/s on
+  SSD-backed storage — see `doc/metadata.md#performance` for the (larger) effect of disk
+  choice on top of this.
+
 #### Documentation
 
 - `doc/` holds the user-facing documentation: `index.md`, `installation.md`,
-  `configuration.md`, and `corpus.md` covering releases, resume, the internal layout of the
-  archive, traceability and troubleshooting.
+  `configuration.md`, `corpus.md`, and `metadata.md` (step 2: fetching and importing the
+  IMDb datasets, the two-pass import, traceability, performance, troubleshooting).
 - `README.md` gained a quick-start section with a real transcript.
 
 ### Changed
@@ -126,8 +161,13 @@ breaking changes for users. They do change names that were already committed.
   no argument writes to Rich's global console, which is not the one the `Progress` renders
   on; only prints on the live display's own console go through its render hook. Both now
   share `glyphwell.console.console`.
+- **A title starting with a literal `"` was silently corrupted on import.** About 5 500
+  rows of `title.basics.tsv` have a `primaryTitle` that literally starts with `"` (e.g.
+  `"Giliap"`, a real 1975 film) — IMDb's datasets are not CSV-quoted. Python's default
+  `csv` dialect treats a leading `"` as opening a quoted field and silently strips it;
+  `iter_rows` now reads with `quoting=csv.QUOTE_NONE`.
 
-Both index defects are covered by regression tests.
+All four defects are covered by regression tests.
 
 ### Public API
 
@@ -151,11 +191,11 @@ raise `NotImplementedError` at this stage; see *Known limitations*.
 | `glyphwell.corpus.chunker` | `Chunk`, `chunk_count`, `iter_chunks` |
 | `glyphwell.corpus.hashing` | `DEFAULT_CHUNK_SIZE`, `sha256_file` |
 | `glyphwell.db` | `SCHEMA_VERSION`, `connect`, `current_version`, `ensure_current`, `initialize`, `open_connection`, `schema_sql` |
-| `glyphwell.db.repositories` | `CorpusDownloadRow`, `CorpusDownloadsRepository`, `DownloadStatus`, `FileStatus`, `RunStatus`, `ResultRow`, `ResultsRepository`, `RunFileRow`, `RunFilesRepository`, `RunRow`, `RunsRepository`, `SubtitleFileRow`, `SubtitleFilesRepository`, `TitleRow`, `TitlesRepository` |
+| `glyphwell.db.repositories` | `CorpusDownloadRow`, `CorpusDownloadsRepository`, `DownloadStatus`, `EpisodeLink`, `FileStatus`, `ImportRow`, `ImportSource`, `ImportsRepository`, `RunStatus`, `ResultRow`, `ResultsRepository`, `RunFileRow`, `RunFilesRepository`, `RunRow`, `RunsRepository`, `SubtitleFileRow`, `SubtitleFilesRepository`, `TitleRow`, `TitlesRepository` |
 | `glyphwell.manifest` | `LoadedManifest`, `Prefilter`, `SearchManifest`, `load`, `manifest_hash` |
 | `glyphwell.manifest.model` | `ChunkConfig`, `OutputConfig`, `OutputFormat`, `PrefilterConfig`, `PrefilterMode`, `PromptConfig`, `SearchManifest`, `SelectConfig`, `YearRange` |
 | `glyphwell.metadata` | `ImdbDataset`, `SqliteTitleProvider`, `Title`, `TitleProvider` |
-| `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `download`, `import_basics`, `import_episodes`, `iter_rows` |
+| `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `download`, `import_basics`, `import_episodes`, `iter_rows`, `locate_dataset` |
 | `glyphwell.ollama` | `Completion`, `LlmClient`, `OllamaClient`, `PromptContext`, `render`, `render_context` |
 | `glyphwell.ollama.prompts` | `PLACEHOLDERS`, `PromptContext`, `render`, `render_context` |
 | `glyphwell.search` | `Checkpoint`, `ExportFormat`, `PlannedFile`, `SearchEngine`, `SearchOutcome`, `ValidatedOutput`, `commit_chunk`, `enqueue`, `export_run`, `iter_work`, `load_checkpoint`, `validate_output` |
@@ -176,18 +216,46 @@ glyphwell [--version] [--data-dir] [--database] [--log-level]
 glyphwell db        init | status | vacuum
 glyphwell corpus    fetch [--language --version --corpus --dest --force --hash]
                     index | refresh
-glyphwell metadata  fetch-imdb | import-imdb
+glyphwell metadata  fetch-imdb [--force] | import-imdb [--source-dir]
 glyphwell search    run | resume | status | export
 ```
 
 ### Known limitations
 
-- 68 call sites across 16 modules raise `NotImplementedError`. Signatures, dataclasses and
-  protocols are complete and typecheck under strict mypy, but the bodies are not written.
-  Fully working at this point: `db init`, `db status`, `db vacuum`, `corpus fetch`, manifest
+- 56 call sites across 13 modules raise `NotImplementedError` (down from 68 across 16).
+  Signatures, dataclasses and protocols are complete and typecheck under strict mypy, but
+  the bodies are not written. Fully working at this point: `db init`, `db status`,
+  `db vacuum`, `corpus fetch`, `metadata fetch-imdb`, `metadata import-imdb`, manifest
   loading, validation and hashing, sha256 computation, configuration and logging.
-- `corpus index`, `corpus refresh`, and the whole `metadata` and `search` groups still
-  raise. `CorpusDownloadsRepository` is the only repository implemented.
+- `corpus index`, `corpus refresh`, and the whole `search` group still raise.
+  `CorpusDownloadsRepository`, `TitlesRepository`, and `ImportsRepository` are
+  implemented; `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, and
+  `ResultsRepository` still raise.
+- **No incremental resume for the IMDb import.** Unlike the search engine's per-chunk
+  resume (ADR-0005), `import_basics`/`import_episodes` keep no cursor: an interruption is
+  safe (the batch in progress is rolled back, upsert makes replaying it a no-op) but a
+  rerun always restarts from the first row of the file, re-processing everything already
+  imported. Acceptable for a periodic, one-off catalogue refresh; would need a real fix
+  before running unattended on a schedule.
+- **`SqliteTitleProvider.resolve_many` is not batched.** It calls `resolve()` — two
+  single-row lookups (the title, then its parent if it's an episode) — once per
+  identifier, rather than issuing one query for the whole batch. Simple and correct, but
+  a caller resolving hundreds of thousands of identifiers at once (e.g. the whole corpus)
+  pays one SQLite round trip per identifier instead of a handful of batched ones.
+- **A dropped episode link fails silently.** See ADR-0010 *Risks*: if `import_episodes`
+  runs for a `tconst` that `import_basics` has not written yet, the `UPDATE` matches zero
+  rows and the link is lost without an error. `import-imdb` always runs the two passes in
+  the right order, but nothing currently compares "links attempted" against
+  `set_episode_links_many`'s returned count to surface a partial run.
+- **The full-scale import has not been observed to run to completion in development.**
+  Verified at sample scale (up to ~2M real rows) and via one real run that imported
+  6.86M of `title.basics.tsv`'s 12.7M rows before being interrupted; the throughput
+  figures above are extrapolated from those runs, not measured end to end on the full
+  ~22.5M rows of both files together.
+- **Import throughput is largely disk-bound, and no code change fixes that.** Measured on
+  the development machine: the same optimized code reached ~50-70 000 rows/s with the
+  database on an SSD, but only ~9 700 rows/s — barely above the pre-optimization
+  baseline — with the database on a mechanical HDD. See `doc/metadata.md#performance`.
 - **The schema changed shape without a version bump.** `subtitle_files.opus_file_id` became
   `opensubtitles_file_id` and `corpus_downloads.extracted_at` became `verified_at`, while
   `SCHEMA_VERSION` stays at 1 and `_MIGRATIONS` stays empty. A database created before this
@@ -219,3 +287,4 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0007 — enforce very strict typing with no escape hatches
 - ADR-0008 — never extract the corpus archive
 - ADR-0009 — use opustools as the OPUS index only, and httpx for the transfer
+- ADR-0010 — two-pass IMDb import: coalescing upsert plus a dedicated episode-link update
