@@ -4,16 +4,16 @@ The rest of the code never builds SQL directly: it goes through these repositori
 translate SQLite rows into value objects. This is also the only place where the resume
 invariants translate into queries (``INSERT OR IGNORE``, deterministic ordering, one
 transaction per chunk).
-
-STATUS: `CorpusDownloadsRepository`, `TitlesRepository`, and `ImportsRepository` are
-implemented; the rest is still stubs, whose signatures and value objects are final (see
-"Current scope" in CLAUDE.md).
 """
 
+import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
+
+from pydantic import TypeAdapter
 
 from glyphwell.types import (
     ImdbId,
@@ -23,6 +23,8 @@ from glyphwell.types import (
     OpusVersion,
     Sha256,
 )
+
+_JSON_OBJECT_ADAPTER: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
 
 __all__ = [
     "CorpusDownloadRow",
@@ -305,8 +307,51 @@ class SubtitleFilesRepository:
     conn: sqlite3.Connection
 
     def upsert(self, row: SubtitleFileRow) -> int:
-        """Inserts or updates a file, and returns its `file_id`."""
-        raise NotImplementedError
+        """Inserts or updates a file, and returns its `file_id`.
+
+        Matched on the natural key ``(opus_version, language, rel_path)`` — `row.file_id`
+        is never read: it only exists so the same dataclass can represent a row freshly
+        read back from the database. `imdb_id`/`opensubtitles_file_id` are overwritten
+        unconditionally (always freshly re-derived from `rel_path`); the remaining
+        nullable columns are coalesced, so a later partial write (for example backfilling
+        `sentence_count` after a first full read) never blanks out what an earlier pass
+        already knew.
+        """
+        cursor = self.conn.execute(
+            "INSERT INTO subtitle_files"
+            " (opus_version, language, imdb_id, opensubtitles_file_id, rel_path,"
+            "  year, sha256, size_bytes, sentence_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (opus_version, language, rel_path) DO UPDATE SET"
+            "     imdb_id = excluded.imdb_id,"
+            "     opensubtitles_file_id = excluded.opensubtitles_file_id,"
+            "     year = coalesce(excluded.year, subtitle_files.year),"
+            "     sha256 = coalesce(excluded.sha256, subtitle_files.sha256),"
+            "     size_bytes = coalesce(excluded.size_bytes, subtitle_files.size_bytes),"
+            "     sentence_count ="
+            "         coalesce(excluded.sentence_count, subtitle_files.sentence_count),"
+            "     updated_at = datetime('now')"
+            " RETURNING file_id",
+            (
+                row.opus_version,
+                row.language,
+                row.imdb_id,
+                row.opensubtitles_file_id,
+                row.rel_path,
+                row.year,
+                row.sha256,
+                row.size_bytes,
+                row.sentence_count,
+            ),
+        )
+        return int(cursor.fetchone()["file_id"])
+
+    def get(self, file_id: int) -> SubtitleFileRow | None:
+        """Finds a file by its surrogate key."""
+        found = self.conn.execute(
+            "SELECT * FROM subtitle_files WHERE file_id = ?", (file_id,)
+        ).fetchone()
+        return None if found is None else _to_subtitle_file_row(found)
 
     def get_by_path(
         self,
@@ -316,19 +361,35 @@ class SubtitleFilesRepository:
         rel_path: str,
     ) -> SubtitleFileRow | None:
         """Finds a file by its natural key."""
-        raise NotImplementedError
+        found = self.conn.execute(
+            "SELECT * FROM subtitle_files WHERE opus_version = ? AND language = ? AND rel_path = ?",
+            (opus_version, language, rel_path),
+        ).fetchone()
+        return None if found is None else _to_subtitle_file_row(found)
 
     def set_hash(self, file_id: int, sha256: Sha256, *, size_bytes: int) -> None:
-        """Records a file's checksum."""
-        raise NotImplementedError
+        """Records a file's checksum.
+
+        Unconditional overwrite: the caller just computed an authoritative, fresh
+        checksum, unlike `upsert`'s coalesced write.
+        """
+        self.conn.execute(
+            "UPDATE subtitle_files SET sha256 = ?, size_bytes = ?, updated_at = datetime('now')"
+            " WHERE file_id = ?",
+            (sha256, size_bytes, file_id),
+        )
 
     def iter_stale(self) -> Iterator[SubtitleFileRow]:
         """Files whose checksum is missing or stale, to be rehashed."""
-        raise NotImplementedError
+        for found in self.conn.execute(
+            "SELECT * FROM subtitle_files WHERE sha256 IS NULL ORDER BY file_id"
+        ):
+            yield _to_subtitle_file_row(found)
 
     def count(self) -> int:
         """Number of cataloged files."""
-        raise NotImplementedError
+        found = self.conn.execute("SELECT COUNT(*) AS n FROM subtitle_files").fetchone()
+        return int(found["n"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,24 +406,65 @@ class RunsRepository:
         manifest_snapshot: str,
         model: str,
     ) -> int:
-        """Creates a search and returns its `run_id`."""
-        raise NotImplementedError
+        """Creates a search and returns its `run_id`.
+
+        `status` is left out: the schema defaults it to ``pending``.
+        """
+        cursor = self.conn.execute(
+            "INSERT INTO runs (manifest_path, manifest_hash, manifest_snapshot, model)"
+            " VALUES (?, ?, ?, ?)",
+            (manifest_path, manifest_hash, manifest_snapshot, model),
+        )
+        return int(cursor.lastrowid) if cursor.lastrowid is not None else 0
 
     def get(self, run_id: int) -> RunRow | None:
         """Returns a search, or `None`."""
-        raise NotImplementedError
+        found = self.conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        return None if found is None else _to_run_row(found)
+
+    def get_manifest_snapshot(self, run_id: int) -> str | None:
+        """Returns the archived YAML source of a search's manifest, or `None`.
+
+        A dedicated lookup rather than a `RunRow` field: the snapshot is the full YAML
+        text, and `list_all`/`find_by_hash` callers (a status listing, a resume check)
+        have no use for loading it on every row.
+        """
+        found = self.conn.execute(
+            "SELECT manifest_snapshot FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return None if found is None else str(found["manifest_snapshot"])
 
     def find_by_hash(self, manifest_hash: Sha256) -> Sequence[RunRow]:
         """Searches already launched for this manifest, most recent first."""
-        raise NotImplementedError
+        rows = self.conn.execute(
+            "SELECT * FROM runs WHERE manifest_hash = ? ORDER BY created_at DESC, run_id DESC",
+            (manifest_hash,),
+        ).fetchall()
+        return [_to_run_row(row) for row in rows]
 
     def set_status(self, run_id: int, status: RunStatus) -> None:
-        """Changes the status of a search."""
-        raise NotImplementedError
+        """Changes the status of a search.
+
+        `finished_at` is derived from the *new* status, not merely preserved: a status
+        that regresses out of a terminal one (for example a corrective re-run) does not
+        leave a stale `finished_at` behind.
+        """
+        self.conn.execute(
+            "UPDATE runs SET"
+            "     status = ?,"
+            "     updated_at = datetime('now'),"
+            "     finished_at = CASE WHEN ? IN ('done', 'failed')"
+            "         THEN datetime('now') ELSE NULL END"
+            " WHERE run_id = ?",
+            (status.value, status.value, run_id),
+        )
 
     def list_all(self) -> Sequence[RunRow]:
         """All searches, most recent first."""
-        raise NotImplementedError
+        rows = self.conn.execute(
+            "SELECT * FROM runs ORDER BY created_at DESC, run_id DESC"
+        ).fetchall()
+        return [_to_run_row(row) for row in rows]
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,43 +479,127 @@ class RunFilesRepository:
         Idempotent: reusable to complete the queue of an existing run when new files
         appear in the corpus.
         """
-        raise NotImplementedError
+        if not file_ids:
+            return 0
+        cursor = self.conn.executemany(
+            "INSERT OR IGNORE INTO run_files (run_id, file_id) VALUES (?, ?)",
+            [(run_id, file_id) for file_id in file_ids],
+        )
+        return cursor.rowcount
 
     def iter_pending(self, run_id: int) -> Iterator[RunFileRow]:
         """Unfinished files, in the deterministic ``ORDER BY rel_path`` order.
 
         This ordering is what makes `chunk_index` stable across runs: without it, resuming
-        would not point to the same chunks.
+        would not point to the same chunks. "Unfinished" excludes `error` on purpose: a
+        broken file needs a deliberate recovery action, not a silent retry on every resume.
         """
-        raise NotImplementedError
+        for found in self.conn.execute(
+            "SELECT run_files.* FROM run_files"
+            " JOIN subtitle_files ON subtitle_files.file_id = run_files.file_id"
+            " WHERE run_files.run_id = ? AND run_files.status IN ('pending', 'in_progress')"
+            " ORDER BY subtitle_files.rel_path",
+            (run_id,),
+        ):
+            yield _to_run_file_row(found)
 
     def get(self, run_id: int, file_id: int) -> RunFileRow | None:
         """State of a file within a search."""
-        raise NotImplementedError
+        found = self.conn.execute(
+            "SELECT * FROM run_files WHERE run_id = ? AND file_id = ?", (run_id, file_id)
+        ).fetchone()
+        return None if found is None else _to_run_file_row(found)
 
     def mark_started(self, run_id: int, file_id: int) -> None:
-        """Sets a file to `IN_PROGRESS`."""
-        raise NotImplementedError
+        """Sets a file to `IN_PROGRESS`.
+
+        `started_at` is set once (`coalesce`), so repeated resumes of the same file do
+        not keep pushing it forward.
+        """
+        self.conn.execute(
+            "UPDATE run_files SET"
+            "     status = 'in_progress',"
+            "     started_at = coalesce(started_at, datetime('now')),"
+            "     updated_at = datetime('now')"
+            " WHERE run_id = ? AND file_id = ?",
+            (run_id, file_id),
+        )
 
     def mark_done(self, run_id: int, file_id: int) -> None:
         """Sets a file to `DONE`."""
-        raise NotImplementedError
+        self.conn.execute(
+            "UPDATE run_files SET status = 'done', updated_at = datetime('now')"
+            " WHERE run_id = ? AND file_id = ?",
+            (run_id, file_id),
+        )
 
     def mark_error(self, run_id: int, file_id: int, error: str) -> None:
         """Sets a file to `ERROR` while keeping its cursor, so resuming stays possible."""
-        raise NotImplementedError
+        self.conn.execute(
+            "UPDATE run_files SET status = 'error', error = ?, updated_at = datetime('now')"
+            " WHERE run_id = ? AND file_id = ?",
+            (error, run_id, file_id),
+        )
+
+    def advance(
+        self,
+        run_id: int,
+        file_id: int,
+        *,
+        last_sentence_index: int,
+        last_sentence_id: str,
+        chunks_done: int,
+    ) -> None:
+        """Advances a file's resume cursor after a chunk has been committed.
+
+        Also flips ``pending`` to ``in_progress`` on the first advance, for a file
+        processed inline without a separate `mark_started` call.
+        """
+        self.conn.execute(
+            "UPDATE run_files SET"
+            "     status = CASE WHEN status = 'pending' THEN 'in_progress' ELSE status END,"
+            "     last_sentence_index = ?,"
+            "     last_sentence_id = ?,"
+            "     chunks_done = ?,"
+            "     updated_at = datetime('now')"
+            " WHERE run_id = ? AND file_id = ?",
+            (last_sentence_index, last_sentence_id, chunks_done, run_id, file_id),
+        )
 
     def reset(self, file_id: int) -> int:
         """Resets a file to `PENDING` across all searches and clears its cursor.
 
         Called when the file's checksum has changed. Only touches this file: the rest of
-        each search is preserved.
+        each search is preserved. Also clears `error`/`started_at`, so a reset row is
+        indistinguishable from a freshly `enqueue_many`'d one.
         """
-        raise NotImplementedError
+        cursor = self.conn.execute(
+            "UPDATE run_files SET"
+            "     status = 'pending',"
+            "     last_sentence_index = NULL,"
+            "     last_sentence_id = NULL,"
+            "     chunks_done = 0,"
+            "     error = NULL,"
+            "     started_at = NULL,"
+            "     updated_at = datetime('now')"
+            " WHERE file_id = ?",
+            (file_id,),
+        )
+        return cursor.rowcount
 
     def progress(self, run_id: int) -> dict[FileStatus, int]:
-        """Counts files by status, for ``search status``."""
-        raise NotImplementedError
+        """Counts files by status, for ``search status``.
+
+        Always returns all 5 statuses, zero-filled for those with no row, so a caller
+        building a fixed-column report never needs a defensive `.get(...)`.
+        """
+        counts: dict[FileStatus, int] = dict.fromkeys(FileStatus, 0)
+        for found in self.conn.execute(
+            "SELECT status, COUNT(*) AS n FROM run_files WHERE run_id = ? GROUP BY status",
+            (run_id,),
+        ):
+            counts[FileStatus(found["status"])] = int(found["n"])
+        return counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,24 +612,51 @@ class ResultsRepository:
         """Inserts a result, with no effect if it already exists.
 
         Returns true if a row was written. A duplicate is not an error: it is the normal
-        case when a chunk is replayed after an interruption.
+        case when a chunk is replayed after an interruption — this is exactly the signal
+        `search.checkpoint.commit_chunk` uses to tell a new chunk from a replayed one.
         """
-        raise NotImplementedError
+        cursor = self.conn.execute(
+            "INSERT OR IGNORE INTO results"
+            " (run_id, file_id, chunk_index, first_sentence_index, last_sentence_index,"
+            "  matched, payload, model, latency_ms)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row.run_id,
+                row.file_id,
+                row.chunk_index,
+                row.first_sentence_index,
+                row.last_sentence_index,
+                int(row.matched),
+                None if row.payload is None else json.dumps(row.payload),
+                row.model,
+                row.latency_ms,
+            ),
+        )
+        return cursor.rowcount > 0
 
     def delete_for_file(self, file_id: int) -> int:
         """Deletes all results for a file, across every search.
 
         Used for invalidation when the subtitle's content has changed.
         """
-        raise NotImplementedError
+        cursor = self.conn.execute("DELETE FROM results WHERE file_id = ?", (file_id,))
+        return cursor.rowcount
 
     def iter_matches(self, run_id: int) -> Iterator[ResultRow]:
         """Positive results of a search, for export."""
-        raise NotImplementedError
+        for found in self.conn.execute(
+            "SELECT * FROM results WHERE run_id = ? AND matched = 1 ORDER BY file_id, chunk_index",
+            (run_id,),
+        ):
+            yield _to_result_row(found)
 
     def count(self, run_id: int, *, matched_only: bool = False) -> int:
         """Number of results of a search."""
-        raise NotImplementedError
+        query = "SELECT COUNT(*) AS n FROM results WHERE run_id = ?"
+        if matched_only:
+            query += " AND matched = 1"
+        found = self.conn.execute(query, (run_id,)).fetchone()
+        return int(found["n"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -604,4 +817,64 @@ def _to_import_row(row: sqlite3.Row) -> ImportRow:
         released_at=None if row["released_at"] is None else str(row["released_at"]),
         row_count=None if row["row_count"] is None else int(row["row_count"]),
         imported_at=None if row["imported_at"] is None else str(row["imported_at"]),
+    )
+
+
+def _to_subtitle_file_row(row: sqlite3.Row) -> SubtitleFileRow:
+    """Translates a row of `subtitle_files`."""
+    return SubtitleFileRow(
+        file_id=int(row["file_id"]),
+        opus_version=str(row["opus_version"]),
+        language=str(row["language"]),
+        imdb_id=str(row["imdb_id"]),
+        opensubtitles_file_id=str(row["opensubtitles_file_id"]),
+        rel_path=str(row["rel_path"]),
+        year=None if row["year"] is None else int(row["year"]),
+        sha256=None if row["sha256"] is None else str(row["sha256"]),
+        size_bytes=None if row["size_bytes"] is None else int(row["size_bytes"]),
+        sentence_count=None if row["sentence_count"] is None else int(row["sentence_count"]),
+    )
+
+
+def _to_run_row(row: sqlite3.Row) -> RunRow:
+    """Translates a row of `runs`."""
+    return RunRow(
+        run_id=int(row["run_id"]),
+        manifest_path=str(row["manifest_path"]),
+        manifest_hash=str(row["manifest_hash"]),
+        model=str(row["model"]),
+        status=RunStatus(row["status"]),
+    )
+
+
+def _to_run_file_row(row: sqlite3.Row) -> RunFileRow:
+    """Translates a row of `run_files`."""
+    return RunFileRow(
+        run_id=int(row["run_id"]),
+        file_id=int(row["file_id"]),
+        status=FileStatus(row["status"]),
+        file_sha256=None if row["file_sha256"] is None else str(row["file_sha256"]),
+        last_sentence_index=(
+            None if row["last_sentence_index"] is None else int(row["last_sentence_index"])
+        ),
+        last_sentence_id=None if row["last_sentence_id"] is None else str(row["last_sentence_id"]),
+        chunks_done=int(row["chunks_done"]),
+        error=None if row["error"] is None else str(row["error"]),
+    )
+
+
+def _to_result_row(row: sqlite3.Row) -> ResultRow:
+    """Translates a row of `results`."""
+    payload = row["payload"]
+    return ResultRow(
+        result_id=int(row["result_id"]),
+        run_id=int(row["run_id"]),
+        file_id=int(row["file_id"]),
+        chunk_index=int(row["chunk_index"]),
+        first_sentence_index=int(row["first_sentence_index"]),
+        last_sentence_index=int(row["last_sentence_index"]),
+        matched=bool(row["matched"]),
+        payload=None if payload is None else _JSON_OBJECT_ADAPTER.validate_json(payload),
+        model=str(row["model"]),
+        latency_ms=None if row["latency_ms"] is None else int(row["latency_ms"]),
     )

@@ -128,7 +128,6 @@ class SelectConfig(_Base):
         description="IMDb types kept (movie, tvEpisode, tvSeries...). Empty = all.",
     )
     years: YearRange = YearRange()
-    exclude_adult: bool = True
     imdb_ids: tuple[str, ...] | None = Field(
         default=None,
         description="Restricts the search to these titles. `null` = the whole corpus.",
@@ -174,7 +173,9 @@ class SearchManifest(_Base):
 
     name: str = Field(min_length=1, description="Human-readable identifier of the search.")
     description: str | None = None
-    model: str = Field(min_length=1, description="Ollama model, for example llama3.1:8b.")
+    model: str = Field(
+        min_length=1, description="Ollama model, for example huihui_ai/qwen3-abliterated:14b."
+    )
     options: dict[str, JsonValue] = Field(
         default_factory=dict,
         description="Options passed through as-is to Ollama (temperature, num_ctx...).",
@@ -193,3 +194,11 @@ class SearchManifest(_Base):
             "`null`: every produced result is considered a match."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_match_when(self) -> Self:
+        """Text output has no JSON field for `match_when` to designate."""
+        if self.match_when is not None and self.output.format == "text":
+            message = "match_when requires output.format == 'json'"
+            raise ValueError(message)
+        return self

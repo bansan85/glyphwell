@@ -221,6 +221,6 @@ downloaded is kept.
 
 ## What's next
 
-The archive is in place, but its content is not yet cataloged. `glyphwell corpus
-index` — not yet implemented — will walk its members and populate the `subtitle_files`
-table.
+The archive is in place, but its content is not yet cataloged: run `glyphwell corpus
+index` to walk its members and populate the `subtitle_files` table, then move on to
+[search.md](search.md) to define and run a search.

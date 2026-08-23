@@ -10,20 +10,22 @@ The IMDb identifier appears there **bare** (``1596342``), not in its canonical f
 
 Since the archive is never decompressed, these paths designate no file on disk: they are
 the opening keys of `glyphwell.corpus.archive.CorpusArchive`.
-
-STATUS: stubs, except for the constants.
 """
 
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
+from glyphwell.errors import CorpusLayoutError
+from glyphwell.logging import get_logger
 from glyphwell.types import ImdbId, LanguageCode, OpenSubtitlesFileId
 
 if TYPE_CHECKING:
     from glyphwell.corpus.archive import CorpusArchive
+
+_log = get_logger(__name__)
 
 __all__ = [
     "IMDB_ID_WIDTH",
@@ -87,7 +89,12 @@ def normalize_imdb_id(raw: str) -> ImdbId:
     Raises:
         CorpusLayoutError: the string is not a recognizable IMDb identifier.
     """
-    raise NotImplementedError
+    candidate = raw.strip()
+    digits = candidate.removeprefix("tt")
+    if not digits or not _IMDB_NUMERIC.fullmatch(digits):
+        message = f"not a recognizable IMDb identifier: {raw!r}"
+        raise CorpusLayoutError(message)
+    return f"tt{digits.zfill(IMDB_ID_WIDTH)}"
 
 
 def parse_entry(rel_path: Path) -> CorpusEntry:
@@ -103,7 +110,43 @@ def parse_entry(rel_path: Path) -> CorpusEntry:
     Raises:
         CorpusLayoutError: the path does not follow the expected layout.
     """
-    raise NotImplementedError
+    # Archive member names are always `/`-separated; `str(Path(...))` would render `\`
+    # on Windows and silently corrupt the key `CorpusArchive.open_member` requires.
+    posix = PurePosixPath(rel_path.as_posix())
+    segments = posix.parts
+    if len(segments) != 6:
+        message = f"unexpected path shape ({len(segments)} segment(s)): {rel_path}"
+        raise CorpusLayoutError(message)
+
+    _corpus, _preprocessing, language, year_segment, imdb_segment, filename = segments
+
+    suffix = next((s for s in SUBTITLE_SUFFIXES if filename.endswith(s)), None)
+    if suffix is None:
+        message = f"not a subtitle member: {rel_path}"
+        raise CorpusLayoutError(message)
+    opensubtitles_file_id = filename.removesuffix(suffix)
+    if not opensubtitles_file_id:
+        message = f"empty subtitle identifier: {rel_path}"
+        raise CorpusLayoutError(message)
+
+    try:
+        year: int | None = int(year_segment)
+    except ValueError:
+        year = None
+
+    try:
+        imdb_id = normalize_imdb_id(imdb_segment)
+    except CorpusLayoutError as exc:
+        message = f"{rel_path}: {exc}"
+        raise CorpusLayoutError(message) from exc
+
+    return CorpusEntry(
+        rel_path=posix.as_posix(),
+        language=language,
+        year=year,
+        imdb_id=imdb_id,
+        opensubtitles_file_id=opensubtitles_file_id,
+    )
 
 
 def iter_corpus(
@@ -124,4 +167,18 @@ def iter_corpus(
     Yields:
         The entries encountered, in no guaranteed order — the planner is what sorts them.
     """
-    raise NotImplementedError
+    skipped = 0
+    for member in archive.iter_members():
+        try:
+            entry = parse_entry(Path(member.rel_path))
+        except CorpusLayoutError as exc:
+            skipped += 1
+            _log.debug("skipping unparsable member: %s", exc)
+            continue
+        if language is not None and entry.language != language:
+            continue
+        yield entry
+    if skipped:
+        _log.warning(
+            "%d member(s) did not match the expected corpus layout and were skipped", skipped
+        )

@@ -8,21 +8,24 @@
 #
 # Launch:  uv run glyphwell search run searches/example.yaml --limit 20
 
-name: example
+name: ski_pistes
 description: >
-  Spots scenes where a character cooks or talks about cooking. Mainly used to verify the
-  full pipeline on a small sample before launching a real search.
+  Extracts the names of ski slopes/trails (pistes) that characters ski on, discuss, or
+  refer to by name.
 
-# Ollama model. Must be available locally (`ollama pull llama3.1:8b`): the command
-# checks this before scanning the corpus.
-model: llama3.1:8b
+# Ollama model. Must be available locally (`ollama pull huihui_ai/qwen3-abliterated:14b`):
+# the command checks this before scanning the corpus.
+model: huihui_ai/qwen3-abliterated:14b
 
 # Options passed through as-is to Ollama.
 # temperature 0: reproducible results are wanted from one run to the next.
 # num_ctx must stay larger than the chunk size, otherwise the model truncates the context.
+# num_predict bounds the response length: the expected JSON object is small, so this caps
+# worst-case latency per call and guards against runaway generation.
 options:
   temperature: 0
-  num_ctx: 8192
+  num_ctx: 12288
+  num_predict: 300
 
 # --------------------------------------------------------------------------------------
 # Which subtitles to analyze
@@ -32,11 +35,10 @@ options:
 # Without them, files whose identifier is not resolved are excluded.
 select:
   languages: [en]
-  title_types: [movie, tvEpisode] # empty = all types
+  title_types: [] # empty = all types
   years:
     min: null
     max: null
-  exclude_adult: true
   imdb_ids: null # or an explicit list: ["tt0133093"]
 
 # --------------------------------------------------------------------------------------
@@ -49,8 +51,8 @@ select:
 # loses at most one chunk of work.
 # `overlap` must stay strictly smaller than `size`.
 chunk:
-  size: 80
-  overlap: 10
+  size: 150
+  overlap: 20
 
 # --------------------------------------------------------------------------------------
 # Prefilter — evaluated locally, before any call to the model
@@ -63,12 +65,16 @@ chunk:
 #
 # mode: any (at least one pattern) | all (all of them) | none (none of them) | off (no filtering)
 prefilter:
-  mode: any
+  mode: "off"
   patterns:
-    - kitchen
-    - recipe
-    - cooking
-    - dinner
+    - piste
+    - ski
+    - slope
+    - trail
+    - chairlift
+    - gondola
+    - mogul
+    - black diamond
   case_sensitive: false
   regex: false
 
@@ -87,6 +93,8 @@ prompt:
     You analyze excerpts of movie and TV show subtitles.
     You answer only with a JSON object matching the requested schema.
     You only quote lines that are actually present in the excerpt provided.
+    You only list a piste name when it is actually named in the excerpt, never invented
+    or inferred from context.
     When in doubt, answer matched: false.
 
   user: |
@@ -95,8 +103,8 @@ prompt:
 
     {{ chunk }}
 
-    Does this excerpt show a character cooking, or a conversation about preparing a
-    meal?
+    Does this excerpt name a specific ski slope or trail (piste) that a character is
+    skiing on, discussing, or referring to by name? List every such name mentioned.
 
 # --------------------------------------------------------------------------------------
 # Expected output
@@ -110,10 +118,15 @@ output:
     properties:
       matched:
         type: boolean
-        description: True if the excerpt matches the question asked.
+        description: True if the excerpt names a specific ski slope or trail.
       confidence:
         type: number
         description: Confidence between 0 and 1.
+      piste_names:
+        type: array
+        description: Names of ski slopes/trails mentioned verbatim in the excerpt.
+        items:
+          type: string
       quotes:
         type: array
         description: Lines quoted verbatim from the excerpt.

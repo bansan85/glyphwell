@@ -123,11 +123,58 @@ below sit under `Unreleased`.
   index back once `search/planner.py` actually implements that prefilter — see ADR-0011
   *Risks*.
 
+#### Full-corpus search
+
+- `glyphwell corpus index` and `glyphwell search run` (including `--dry-run`) are
+  operational end to end: the corpus can now be catalogued and scanned by an Ollama
+  model, with per-chunk resume.
+- `corpus/layout.py`: `normalize_imdb_id`, `parse_entry`, and `iter_corpus` are
+  implemented — parsing the six-segment archive path (ADR-0008), rejecting a malformed
+  member instead of guessing, and counting/skipping members that don't match instead of
+  raising for the whole archive over one bad entry.
+- `corpus/reader.py`: `iter_sentences`/`count_sentences` stream an already-open archive
+  member (never a `Path` — the archive is never extracted, ADR-0008) through
+  `lxml.etree.iterparse(..., recover=True)`, freeing each `<s>` element once visited so
+  memory does not grow with the file. `corpus/hashing.py` gained `sha256_stream` for the
+  same reason: an archive member has no path on disk to hash from.
+- `corpus/chunker.py`: `iter_chunks`/`chunk_count` implement the fixed-stride sliding
+  window decided by ADR-0005.
+- `manifest/prefilter.py`: `Prefilter` compiles a manifest's patterns once per search
+  (literal patterns `re.escape`-d, folding literal and regex matching into one code path)
+  and evaluates `any`/`all`/`none`/`off` against a chunk's rendered text.
+- `ollama/prompts.py`: `render`/`render_context` substitute a chunk's `{{ title / year /
+  imdb_id / first_id / last_id / chunk }}` placeholders, raising `ManifestError` on an
+  unknown one rather than sending a truncated prompt to thousands of chunks.
+- `ollama/client.py`: `OllamaClient`, backed by the `ollama` package, implements
+  `LlmClient.complete` (schema-constrained generation, decoded and re-checked
+  client-side — ADR-0013) and `ensure_model` (fails a run before it starts scanning the
+  corpus rather than partway through it), with retry/backoff on transient failures and
+  immediate failure on a request the server itself rejects.
+- `search/engine.py`, `search/planner.py`, `search/checkpoint.py`: the full
+  orchestration — deterministic queue (`ORDER BY rel_path`), per-chunk commit
+  (`commit_chunk`, one transaction per chunk), and cross-file concurrency bounded by
+  `Settings.concurrency`, with worker threads confined to the Ollama call itself
+  (ADR-0012). A prefiltered-out chunk still gets a `commit_chunk` call (`matched=False,
+  payload=None`) so `results` stays a gapless ledger of every `chunk_index` for a file.
+  Clean SIGINT handling: the current chunk finishes and commits before the run is marked
+  `paused`.
+- `search/results.py`: `validate_output` re-checks a response against the manifest's
+  schema and resolves `match_when`, independently of the `format` constraint already
+  requested from Ollama (ADR-0013).
+- `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, and
+  `ResultsRepository` (`db/repositories.py`) are now implemented, alongside two additions
+  the engine needed beyond the original stub signatures: `SubtitleFilesRepository.get`
+  and `RunsRepository.get_manifest_snapshot` (a dedicated lookup, so listing runs doesn't
+  load every archived YAML body).
+- `searches/example.yaml` gained a worked example (`ski_pistes`): a full
+  `select`/`chunk`/`prefilter`/`prompt`/`output` manifest that doubles as regression
+  coverage for the manifest format (`test_loads_example_manifest`).
+
 #### Documentation
 
 - `doc/` holds the user-facing documentation: `index.md`, `installation.md`,
-  `configuration.md`, `corpus.md`, and `metadata.md` (step 2: fetching and importing the
-  IMDb datasets, the two-pass import, traceability, performance, troubleshooting).
+  `configuration.md`, `corpus.md`, `metadata.md`, and `search.md` (step 3: cataloguing
+  the corpus, the manifest format, `--dry-run`, concurrency, troubleshooting).
 - `README.md` gained a quick-start section with a real transcript.
 
 ### Changed
@@ -192,7 +239,8 @@ All four defects are covered by regression tests.
 ### Public API
 
 The following names are exported and stable in shape. Most of the callables behind them
-raise `NotImplementedError` at this stage; see *Known limitations*.
+are now implemented; see *Known limitations* for the handful that still raise
+`NotImplementedError`.
 
 | Module | Exported names |
 |---|---|
@@ -203,13 +251,13 @@ raise `NotImplementedError` at this stage; see *Known limitations*.
 | `glyphwell.console` | `console` |
 | `glyphwell.logging` | `get_logger`, `setup_logging` |
 | `glyphwell.cli` | `AppContext`, `app`, `get_context`, `main` |
-| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `chunk_count`, `count_sentences`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file` |
+| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `chunk_count`, `count_sentences`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file`, `sha256_stream` |
 | `glyphwell.corpus.archive` | `ArchiveMember`, `ArchiveSummary`, `CorpusArchive` |
 | `glyphwell.corpus.opus` | `DEFAULT_CORPUS`, `DEFAULT_PREPROCESSING`, `DEFAULT_TIMEOUT`, `DEFAULT_VERSION`, `CorpusDownload`, `OpusFileRecord`, `Preprocessing`, `ProgressCallback`, `download_corpus`, `iter_available_versions`, `resolve_archive` |
 | `glyphwell.corpus.layout` | `IMDB_ID_WIDTH`, `SUBTITLE_SUFFIXES`, `CorpusEntry`, `iter_corpus`, `normalize_imdb_id`, `parse_entry` |
 | `glyphwell.corpus.reader` | `Sentence`, `count_sentences`, `iter_sentences` |
 | `glyphwell.corpus.chunker` | `Chunk`, `chunk_count`, `iter_chunks` |
-| `glyphwell.corpus.hashing` | `DEFAULT_CHUNK_SIZE`, `sha256_file` |
+| `glyphwell.corpus.hashing` | `DEFAULT_CHUNK_SIZE`, `sha256_file`, `sha256_stream` |
 | `glyphwell.db` | `SCHEMA_VERSION`, `connect`, `current_version`, `ensure_current`, `initialize`, `open_connection`, `schema_sql` |
 | `glyphwell.db.repositories` | `CorpusDownloadRow`, `CorpusDownloadsRepository`, `DownloadStatus`, `EpisodeLink`, `FileStatus`, `ImportRow`, `ImportSource`, `ImportsRepository`, `RunStatus`, `ResultRow`, `ResultsRepository`, `RunFileRow`, `RunFilesRepository`, `RunRow`, `RunsRepository`, `SubtitleFileRow`, `SubtitleFilesRepository`, `TitleRow`, `TitlesRepository` |
 | `glyphwell.manifest` | `LoadedManifest`, `Prefilter`, `SearchManifest`, `load`, `manifest_hash` |
@@ -235,22 +283,41 @@ takes an open `CorpusArchive` rather than a directory root.
 glyphwell [--version] [--data-dir] [--database] [--log-level]
 glyphwell db        init | status | vacuum
 glyphwell corpus    fetch [--language --version --corpus --dest --force --hash]
-                    index | refresh
+                    index [--rehash --language] | refresh
 glyphwell metadata  fetch-imdb [--force] | import-imdb [--source-dir]
-glyphwell search    run | resume | status | export
+glyphwell search    run [--limit --concurrency --dry-run] | resume | status | export
 ```
 
 ### Known limitations
 
-- 56 call sites across 13 modules raise `NotImplementedError` (down from 68 across 16).
-  Signatures, dataclasses and protocols are complete and typecheck under strict mypy, but
-  the bodies are not written. Fully working at this point: `db init`, `db status`,
-  `db vacuum`, `corpus fetch`, `metadata fetch-imdb`, `metadata import-imdb`, manifest
-  loading, validation and hashing, sha256 computation, configuration and logging.
-- `corpus index`, `corpus refresh`, and the whole `search` group still raise.
-  `CorpusDownloadsRepository`, `TitlesRepository`, and `ImportsRepository` are
-  implemented; `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, and
-  `ResultsRepository` still raise.
+- 6 call sites across 3 modules raise `NotImplementedError` (down from 56 across 13, itself
+  down from 68 across 16). Signatures, dataclasses and protocols are complete and
+  typecheck under strict mypy, but the bodies are not written. Fully working at this
+  point: `db init`, `db status`, `db vacuum`, `corpus fetch`, `corpus index`,
+  `metadata fetch-imdb`, `metadata import-imdb`, `search run` (including `--dry-run`),
+  manifest loading/validation/hashing, sha256 computation, configuration and logging.
+- `corpus refresh` and `search resume`/`status`/`export` still raise: revisiting a file
+  whose content changed (ADR-0006) and everything downstream of a finished run
+  (`search/results.py`'s `export_run` and `summary`) remain out of scope. Every
+  repository in `db/repositories.py` is now implemented.
+- **`SelectConfig.title_types`/`years` filtering is live without the index ADR-0011 said
+  it would need.** `search/planner.py::_matching_query` now joins `subtitle_files` to
+  `titles` and filters on `t.title_type`/`t.start_year` exactly as ADR-0011 anticipated,
+  but no migration adding a purpose-built index has landed with it —
+  `db/migrations.py` and `db/schema.sql` are unchanged by this commit. Whether this
+  matters depends on the query plan SQLite picks: driving off `subtitle_files` and
+  reaching `titles` by primary key needs no such index; driving off a
+  `title_type`/`start_year`-filtered scan of `titles` would. Measure with
+  `EXPLAIN QUERY PLAN` on a populated database before assuming either way, and add the
+  migration ADR-0011 already described if it turns out to matter.
+- **`Settings.concurrency` is bounded twice (ADR-0012).** Raising it past what the Ollama
+  server can actually run in parallel — `OLLAMA_NUM_PARALLEL`, and the model's fit in
+  available VRAM — buys nothing: a single, VRAM-constrained GPU serializes the underlying
+  compute regardless of how many chunks the engine hands it at once.
+- **No measurement of a model's schema-compliance rate before a long run (ADR-0013).**
+  `ensure_model` only checks that the model is present, not that it reliably honors
+  `output.schema`; a model with a high violation rate turns into a high per-file error
+  rate discovered mid-run rather than a preflight check.
 - **No incremental resume for the IMDb import.** Unlike the search engine's per-chunk
   resume (ADR-0005), `import_basics`/`import_episodes` keep no cursor: an interruption is
   safe (the batch in progress is rolled back, upsert makes replaying it a no-op) but a
@@ -273,12 +340,6 @@ glyphwell search    run | resume | status | export
   baseline — with the database on a mechanical HDD (measured before ADR-0011's index
   removal; removing them narrows this gap but does not close it, since disk commit
   latency is not an indexing cost). See `doc/metadata.md#performance`.
-- **`SelectConfig.title_types`/`years` (`manifest/model.py`) will need a new index once
-  implemented.** ADR-0011 removed `idx_titles_type_year` and `idx_titles_parent` because
-  nothing queries `titles` that way today, but the manifest schema already declares a
-  type/year prefilter for a future `search/planner.py` to consume. Whoever implements
-  that filter should add a purpose-built index via a new migration, not assume either
-  dropped index is still there.
 - **Some schema changes still predate any version bump.** `SCHEMA_VERSION` is now `2`
   (the index removal above is `db/migrations.py`'s first real migration), but two
   earlier renames — `subtitle_files.opus_file_id` to `opensubtitles_file_id` and
@@ -314,3 +375,5 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0009 — use opustools as the OPUS index only, and httpx for the transfer
 - ADR-0010 — two-pass IMDb import: coalescing upsert plus a dedicated episode-link update
 - ADR-0011 — drop the secondary indexes on `titles`
+- ADR-0012 — cross-file concurrency with thread-confined SQLite access
+- ADR-0013 — re-validate the model's JSON output client-side

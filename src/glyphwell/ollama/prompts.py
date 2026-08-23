@@ -3,13 +3,13 @@
 Deliberately minimal substitution — ``{{ name }}`` replaced by its value — without a full
 template engine: a manifest must not be able to execute code, and a reduced syntax stays
 readable in a YAML file.
-
-STATUS: stubs, apart from the value object.
 """
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from glyphwell.errors import ManifestError
 from glyphwell.types import ImdbId
 
 if TYPE_CHECKING:
@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from glyphwell.corpus.chunker import Chunk
     from glyphwell.metadata.resolver import Title
+
+_PLACEHOLDER_RE: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 __all__ = ["PLACEHOLDERS", "PromptContext", "render", "render_context"]
 
@@ -48,7 +50,14 @@ class PromptContext:
         Missing values become an empty string: a prompt must not contain the word
         ``None``.
         """
-        raise NotImplementedError
+        return {
+            "title": self.title,
+            "year": "" if self.year is None else str(self.year),
+            "imdb_id": self.imdb_id,
+            "first_id": self.first_id,
+            "last_id": self.last_id,
+            "chunk": self.chunk,
+        }
 
 
 def render_context(*, chunk: "Chunk", title: "Title | None", imdb_id: ImdbId) -> PromptContext:
@@ -57,7 +66,14 @@ def render_context(*, chunk: "Chunk", title: "Title | None", imdb_id: ImdbId) ->
     `title` can be `None` when the IMDb datasets do not know the identifier: the label
     then falls back to the identifier itself, and the search continues.
     """
-    raise NotImplementedError
+    return PromptContext(
+        title=title.display_name() if title is not None else imdb_id,
+        year=title.start_year if title is not None else None,
+        imdb_id=imdb_id,
+        first_id=chunk.first.id,
+        last_id=chunk.last.id,
+        chunk=chunk.render(with_ids=True),
+    )
 
 
 def render(template: str, context: PromptContext) -> str:
@@ -74,4 +90,14 @@ def render(template: str, context: PromptContext) -> str:
         ManifestError: the template references an unknown placeholder — better to report
             it than to send a truncated prompt to thousands of chunks.
     """
-    raise NotImplementedError
+    mapping = context.as_mapping()
+
+    def _substitute(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in mapping:
+            known = ", ".join(PLACEHOLDERS)
+            message = f"unknown placeholder {{{{ {name} }}}} in prompt template (known: {known})"
+            raise ManifestError(message)
+        return mapping[name]
+
+    return _PLACEHOLDER_RE.sub(_substitute, template)

@@ -11,14 +11,14 @@ Two invariants govern the whole module:
 2. **Idempotence.** Inserting the result is an ``INSERT OR IGNORE`` on
    ``UNIQUE(run_id, file_id, chunk_index)``: replaying a chunk after an interruption does
    not create a duplicate. The duplicate is the normal case, not an error.
-
-STATUS: stubs, apart from the value object.
 """
 
 import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from glyphwell.db.repositories import ResultRow, ResultsRepository, RunFilesRepository
+from glyphwell.errors import DatabaseError
 from glyphwell.types import JsonObject
 
 if TYPE_CHECKING:
@@ -55,7 +55,16 @@ class Checkpoint:
 
 def load_checkpoint(conn: sqlite3.Connection, *, run_id: int, file_id: int) -> Checkpoint | None:
     """Reads a file's cursor, or `None` if it is not in this search's queue."""
-    raise NotImplementedError
+    row = RunFilesRepository(conn).get(run_id, file_id)
+    if row is None:
+        return None
+    return Checkpoint(
+        run_id=run_id,
+        file_id=file_id,
+        last_sentence_index=row.last_sentence_index,
+        last_sentence_id=row.last_sentence_id,
+        chunks_done=row.chunks_done,
+    )
 
 
 def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -> tuple[int, int]:
@@ -71,8 +80,22 @@ def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -
         number to give the first chunk produced. The two values must stay consistent,
         otherwise `chunk_index` would stop designating the same sentence range as on the
         first pass and the uniqueness constraint would lose its meaning.
+
+        With ``stride = size - overlap``, chunk `k` (0-based) covers stream positions
+        ``[k*stride, k*stride + size)``. The last committed chunk is
+        ``chunks_done - 1``, whose last covered index is `last_sentence_index`; solving
+        for the next chunk's start gives ``chunks_done*stride ==
+        last_sentence_index + 1 - overlap``, and ``chunks_done`` is directly the index to
+        give that next chunk. `size` cancels out of that formula algebraically — kept as
+        a parameter regardless, since it documents the relationship and mirrors
+        `iter_chunks`'s own signature.
     """
-    raise NotImplementedError
+    _ = size
+    if checkpoint is None or not checkpoint.started:
+        return 0, 0
+    assert checkpoint.last_sentence_index is not None  # `started` guarantees this
+    start_index = max(checkpoint.last_sentence_index + 1 - overlap, 0)
+    return start_index, checkpoint.chunks_done
 
 
 def commit_chunk(
@@ -88,6 +111,13 @@ def commit_chunk(
 ) -> bool:
     """Records a chunk's result and advances the cursor, in one transaction.
 
+    The cursor write is unconditional, regardless of whether the result row was newly
+    inserted: given a correctly computed `resume_position` and chunks committed strictly
+    in order, `commit_chunk` is only ever called with `chunk.index` equal to the file's
+    current `chunks_done` — replaying it writes the exact same values again, a safe
+    no-op. The ``INSERT OR IGNORE`` / always-advance combination is defense in depth, not
+    a routine path.
+
     Returns:
         True if a result was inserted, false if the chunk was already recorded — which
         normally happens on resume and is not an error. In both cases the cursor is
@@ -97,4 +127,31 @@ def commit_chunk(
         DatabaseError: write failed. The transaction is then rolled back: the cursor stays
             at the last chunk actually recorded.
     """
-    raise NotImplementedError
+    row = ResultRow(
+        result_id=0,  # disregarded by `insert_ignore`, autoincrement primary key
+        run_id=run_id,
+        file_id=file_id,
+        chunk_index=chunk.index,
+        first_sentence_index=chunk.first.index,
+        last_sentence_index=chunk.last.index,
+        matched=matched,
+        payload=payload,
+        model=model,
+        latency_ms=latency_ms,
+    )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        inserted = ResultsRepository(conn).insert_ignore(row)
+        RunFilesRepository(conn).advance(
+            run_id,
+            file_id,
+            last_sentence_index=chunk.last.index,
+            last_sentence_id=chunk.last.id,
+            chunks_done=chunk.index + 1,
+        )
+        conn.execute("COMMIT")
+    except sqlite3.Error as exc:
+        conn.execute("ROLLBACK")
+        message = f"failed to commit chunk {chunk.index} of file {file_id} (run {run_id}): {exc}"
+        raise DatabaseError(message) from exc
+    return inserted

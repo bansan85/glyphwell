@@ -11,6 +11,7 @@ locally by Ollama.
 | [configuration.md](configuration.md) | `GLYPHWELL_*` variables, `data/` layout. |
 | [corpus.md](corpus.md) | **Step 1**: fetch the OpenSubtitles archive and read it. |
 | [metadata.md](metadata.md) | **Step 2**: fetch and import the IMDb datasets, resolve titles. |
+| [search.md](search.md) | **Step 3**: catalogue the corpus and search it with a manifest. |
 
 ## The four-step pipeline
 
@@ -23,21 +24,25 @@ locally by Ollama.
    → [metadata.md](metadata.md)
 3. **Search.** A YAML manifest describes the prompt, the Ollama model, the selection
    filters, and the expected output schema. Each subtitle is split into sliding chunks
-   of N sentences; each chunk yields one call to the model.
+   of N sentences; each chunk yields one call to the model. → [search.md](search.md)
 4. **Resume.** State is persisted in SQLite at chunk granularity: an interrupted search
    resumes at the current line, not at the start of the file.
 
 ## Progress status
 
-Steps 1 and 2 are operational so far.
+Steps 1 through 3 are operational; step 4 (resuming a run, and re-analysing a file after
+`corpus refresh`) is implemented for the resume-inside-a-file case, but `search resume`,
+`search status`, `search export`, and `corpus refresh` themselves are not yet wired up.
 
 | Capability | Status |
 |---|---|
 | `glyphwell db init` / `status` / `vacuum` | operational |
 | `glyphwell corpus fetch` | **operational** |
-| `glyphwell corpus index` / `refresh` | to implement |
+| `glyphwell corpus index` | **operational** |
+| `glyphwell corpus refresh` | to implement |
 | `glyphwell metadata fetch-imdb` / `import-imdb` | **operational** |
-| `glyphwell search run` / `resume` / `status` / `export` | to implement |
+| `glyphwell search run` (including `--dry-run`) | **operational** |
+| `glyphwell search resume` / `status` / `export` | to implement |
 
 Commands not yet implemented are wired into the CLI and already expose their help: their
 signature is settled, only the processing is missing.

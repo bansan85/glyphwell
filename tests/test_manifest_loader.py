@@ -19,9 +19,9 @@ def test_loads_minimal_manifest(minimal_manifest: Path) -> None:
 def test_loads_example_manifest(example_manifest: Path) -> None:
     """The shipped template must stay valid: it is the executable documentation of the format."""
     loaded = load(example_manifest)
-    assert loaded.manifest.chunk.size == 80
-    assert loaded.manifest.chunk.overlap == 10
-    assert loaded.manifest.prefilter.mode is PrefilterMode.ANY
+    assert loaded.manifest.chunk.size == 150
+    assert loaded.manifest.chunk.overlap == 20
+    assert loaded.manifest.prefilter.mode is PrefilterMode.OFF
     assert loaded.manifest.output.json_schema is not None
     assert loaded.manifest.match_when == "matched"
 

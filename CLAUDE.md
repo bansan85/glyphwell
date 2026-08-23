@@ -297,12 +297,12 @@ only the catalog and progress state live there. Schema declared in
 
 ## 9. Current scope
 
-The skeleton is in place, and **step 1 is operational**. Title resolution (step 2) is now
-operational too.
+The skeleton is in place, and **steps 1 through 3 are operational**: corpus acquisition,
+title resolution, and now full-corpus search via Ollama, including resume.
 
 **Operational**: packaging, configuration, logging, SQLite schema and migrations
 (`db init` produces a valid database), full CLI wiring, YAML manifest loading + validation
-+ hashing, sha256 computation, and above all `glyphwell corpus fetch` — resolution against
++ hashing, sha256 computation, and `glyphwell corpus fetch` — resolution against
 the OPUS index ([corpus/opus.py](src/glyphwell/corpus/opus.py)), resumable download,
 archive reading without extraction
 ([corpus/archive.py](src/glyphwell/corpus/archive.py)), traceability in `corpus_downloads`
@@ -314,33 +314,58 @@ archive reading without extraction
 `TitlesRepository` and `ImportsRepository` in
 [db/repositories.py](src/glyphwell/db/repositories.py).
 
-**Typed stubs** (`raise NotImplementedError`, signatures already complete and passing
-strict mypy) — 56 entry points spread across 13 modules:
+**Also operational, since the search feature landed**:
+
+- `glyphwell corpus index` ([cli/corpus.py](src/glyphwell/cli/corpus.py)): walks the
+  archive via [corpus/layout.py](src/glyphwell/corpus/layout.py)'s `iter_corpus`,
+  populates `subtitle_files` (`SubtitleFilesRepository`), and hashes each member
+  (`--rehash` to force recomputing an already-known checksum).
+- Streaming subtitle reading and chunking:
+  [corpus/reader.py](src/glyphwell/corpus/reader.py) (`iter_sentences`/`count_sentences`,
+  reading the `IO[bytes]` stream from `CorpusArchive.open_member`, never a `Path`) and
+  [corpus/chunker.py](src/glyphwell/corpus/chunker.py) (fixed-stride sliding window).
+- The textual prefilter, [manifest/prefilter.py](src/glyphwell/manifest/prefilter.py).
+- Prompt rendering, [ollama/prompts.py](src/glyphwell/ollama/prompts.py), and the real
+  Ollama client, [ollama/client.py](src/glyphwell/ollama/client.py) (via the `ollama`
+  package; retries on transient failures, immediate failure on a rejected request).
+- The full search orchestration: [search/planner.py](src/glyphwell/search/planner.py),
+  [search/checkpoint.py](src/glyphwell/search/checkpoint.py), and
+  [search/engine.py](src/glyphwell/search/engine.py) — cross-file concurrency
+  (`Settings.concurrency`) with strictly sequential, checkpointed chunks within a file,
+  and clean SIGINT handling. `search/results.py`'s `validate_output` (schema + `match_when`
+  checking) is implemented; `export_run` and `summary` remain stubs (see below).
+- `glyphwell search run <manifest.yaml>`, including `--dry-run`
+  ([cli/search.py](src/glyphwell/cli/search.py)): renders one real, fully-substituted
+  example prompt from the already-downloaded corpus (no `corpus index` required, no DB
+  writes, no Ollama call) so a manifest can be checked before a real run.
+- The four previously-stubbed repositories in
+  [db/repositories.py](src/glyphwell/db/repositories.py): `SubtitleFilesRepository`,
+  `RunsRepository`, `RunFilesRepository`, `ResultsRepository` — plus two small additions
+  needed by the engine that weren't in the original signature list:
+  `SubtitleFilesRepository.get(file_id)`, `RunFilesRepository.advance(...)` (the cursor
+  write `search/checkpoint.py::commit_chunk` needs), and
+  `RunsRepository.get_manifest_snapshot(run_id)` (a dedicated lookup rather than a
+  `RunRow` field, so listing runs doesn't load every archived YAML body).
+
+**Still typed stubs** (`raise NotImplementedError`) — deliberately out of scope for the
+search feature above, since nothing else depends on them yet:
 
 | Module | To implement |
 |---|---|
-| [cli/corpus.py](src/glyphwell/cli/corpus.py), [cli/search.py](src/glyphwell/cli/search.py) | control unit (wiring already done) — `cli/metadata.py` is fully implemented |
-| [manifest/prefilter.py](src/glyphwell/manifest/prefilter.py) | Compilation and application of the pattern prefilter |
-| [corpus/layout.py](src/glyphwell/corpus/layout.py) | parsing the member name, normalizing the imdb_id |
-| [corpus/reader.py](src/glyphwell/corpus/reader.py) | streaming XML reading into `Sentence` |
-| [corpus/chunker.py](src/glyphwell/corpus/chunker.py) | sliding size/overlap chunking |
-| [ollama/client.py](src/glyphwell/ollama/client.py) | model call, retries, JSON output |
-| [ollama/prompts.py](src/glyphwell/ollama/prompts.py) | rendering the manifest's templates |
-| [search/planner.py](src/glyphwell/search/planner.py) | building the work queue |
-| [search/engine.py](src/glyphwell/search/engine.py) | loop, concurrency, clean shutdown |
-| [search/checkpoint.py](src/glyphwell/search/checkpoint.py) | reading/writing the cursor |
-| [search/results.py](src/glyphwell/search/results.py) | output validation, export |
-| [db/repositories.py](src/glyphwell/db/repositories.py) | `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, `ResultsRepository` — `TitlesRepository`, `ImportsRepository`, and `CorpusDownloadsRepository` are done |
+| [search/results.py](src/glyphwell/search/results.py) | `export_run`, `summary` |
+| [cli/search.py](src/glyphwell/cli/search.py) | `resume`, `status`, `export` commands |
+| [cli/corpus.py](src/glyphwell/cli/corpus.py) | `refresh` command |
 
-Suggested order of attack: `corpus/layout.py`, `corpus/reader.py`, and `corpus/chunker.py`
-(pure functions, testable without network access), then the remaining `db/repositories.py`
-entries, and finally `search/` together with `ollama/`.
+Two decisions that shaped the search implementation, worth knowing before touching it
+again:
 
-Three decisions from step 1 constrain what comes next:
-
-- `parse_entry` must **absorb the `<corpus>/<preprocessing>/` prefix** of the member name.
-- `subtitle_files.rel_path` stores the **full member name**, prefix included: it's the only
-  key that allows `CorpusArchive.open_member()` to work. `iter_corpus` now takes a
-  `CorpusArchive`, not a directory root.
-- `corpus/reader.py` will read a stream (`IO[bytes]`) coming from the archive, not a
-  `Path`.
+- `db/connection.py` opens SQLite **without** `check_same_thread=False`: a connection can
+  only be touched from the thread that owns it. This is why `search/engine.py`'s
+  concurrency is *across files*, not within one file's chunk sequence — worker threads
+  only ever call `LlmClient.complete` (pure I/O), never the database or a corpus archive
+  handle.
+- A prefiltered-out chunk still gets a `commit_chunk` call (`matched=False,
+  payload=None`): `commit_chunk` is the only way to advance the resume cursor, so
+  `results` stays a gapless ledger of every `chunk_index` for a file. The in-memory
+  `SearchOutcome.chunks_done`/`chunks_skipped` split is what preserves the distinction
+  the CLI report shows — the DB-side `run_files.chunks_done` counts both.

@@ -7,10 +7,9 @@ The chunking must be **deterministic**: for a given file and a given ``(size, ov
 `Chunk.index` always designates the same range of sentences. This is what makes the
 ``UNIQUE(run_id, file_id, chunk_index)`` constraint on the `results` table usable as an
 idempotency guarantee.
-
-STATUS: stubs, except for the value object.
 """
 
+from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -78,7 +77,19 @@ def iter_chunks(
     Raises:
         ValueError: `size` not strictly positive, or `overlap` outside ``[0, size)``.
     """
-    raise NotImplementedError
+    _validate(size, overlap)
+    step = size - overlap
+    buffer: deque[Sentence] = deque()
+    chunk_index = start_chunk_index
+    for sentence in sentences:
+        buffer.append(sentence)
+        if len(buffer) == size:
+            yield Chunk(index=chunk_index, sentences=tuple(buffer))
+            chunk_index += 1
+            for _ in range(step):
+                buffer.popleft()
+    if buffer:
+        yield Chunk(index=chunk_index, sentences=tuple(buffer))
 
 
 def chunk_count(sentence_count: int, *, size: int, overlap: int) -> int:
@@ -89,4 +100,22 @@ def chunk_count(sentence_count: int, *, size: int, overlap: int) -> int:
     Raises:
         ValueError: invalid chunking parameters.
     """
-    raise NotImplementedError
+    _validate(size, overlap)
+    if sentence_count <= 0:
+        return 0
+    if sentence_count <= size:
+        return 1
+    step = size - overlap
+    # Chunk k covers [k*step, k*step + size); solve k*step + size >= sentence_count for
+    # the smallest such k, then add 1 for the 0-based index.
+    return -(-(sentence_count - size) // step) + 1
+
+
+def _validate(size: int, overlap: int) -> None:
+    """Shared bounds check for `iter_chunks` and `chunk_count`."""
+    if size < 1:
+        message = f"chunk size must be >= 1, got {size}"
+        raise ValueError(message)
+    if not 0 <= overlap < size:
+        message = f"chunk overlap must be in [0, size), got overlap={overlap}, size={size}"
+        raise ValueError(message)

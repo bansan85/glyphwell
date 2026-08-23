@@ -8,25 +8,62 @@ Two points of attention for the implementation:
 
 * **Concurrency.** Calls to the model run in parallel (`Settings.concurrency`), but SQLite
   writes stay serialized: a single transaction per chunk, never two simultaneous ones on
-  the same file.
+  the same file. `glyphwell.db.connection` opens the connection without
+  ``check_same_thread=False``, so it can only ever be touched from the thread that owns
+  it — every DB- or corpus-reading operation therefore happens on that single thread.
+  Worker threads exist only to run `LlmClient.complete`, a pure I/O call that touches
+  neither the connection nor a shared archive handle: concurrency is across *files*, not
+  within one file's own chunk sequence, which stays strictly sequential.
 * **Clean shutdown.** A SIGINT lets the current chunk finish and commit, then moves the
   search to `paused`. A file must never stay `in_progress` with a cursor ahead of the
   results actually recorded.
-
-STATUS: stubs, apart from the value object.
 """
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import threading
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import IO, TYPE_CHECKING
+
+import yaml
+
+from glyphwell.corpus.archive import CorpusArchive
+from glyphwell.corpus.chunker import iter_chunks
+from glyphwell.corpus.reader import iter_sentences
+from glyphwell.db.repositories import (
+    CorpusDownloadsRepository,
+    RunFilesRepository,
+    RunRow,
+    RunsRepository,
+    RunStatus,
+    SubtitleFilesRepository,
+)
+from glyphwell.errors import CorpusError, OllamaError, SearchError
+from glyphwell.logging import get_logger
+from glyphwell.manifest.model import SearchManifest
+from glyphwell.manifest.prefilter import Prefilter
+from glyphwell.metadata.resolver import SqliteTitleProvider
+from glyphwell.ollama.prompts import render, render_context
+from glyphwell.search import planner
+from glyphwell.search.checkpoint import commit_chunk, load_checkpoint, resume_position
+from glyphwell.search.results import validate_output
+from glyphwell.types import ImdbId
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Iterator, Mapping
 
     from glyphwell.config import Settings
+    from glyphwell.corpus.chunker import Chunk
     from glyphwell.manifest.loader import LoadedManifest
-    from glyphwell.ollama.client import LlmClient
+    from glyphwell.manifest.model import OutputConfig
+    from glyphwell.metadata.resolver import Title
+    from glyphwell.ollama.client import Completion, LlmClient
+    from glyphwell.types import JsonValue
 
 __all__ = ["SearchEngine", "SearchOutcome"]
+
+_log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -44,12 +81,40 @@ class SearchOutcome:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _FileState:
+    """A file's live reading state: its open stream and chunk generator.
+
+    Not stored anywhere: it only exists for the duration of one file's processing,
+    whether driven by `SearchEngine.process_file` or the multi-file loop.
+    """
+
+    file_id: int
+    stream: IO[bytes]
+    chunks: "Iterator[Chunk]"
+    title: "Title | None"
+    imdb_id: ImdbId
+
+
+@dataclass(slots=True)
+class _Counters:
+    """Mutable running totals, accumulated while a search's queue is processed."""
+
+    files_done: int = 0
+    chunks_done: int = 0
+    chunks_skipped: int = 0
+    matches: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SearchEngine:
     """Runs a search described by a manifest."""
 
     conn: "sqlite3.Connection"
     client: "LlmClient"
     settings: "Settings"
+    _stop_event: threading.Event = field(
+        default_factory=threading.Event, init=False, repr=False, compare=False
+    )
 
     def start(self, manifest: "LoadedManifest", *, limit: int | None = None) -> SearchOutcome:
         """Creates a search, builds its queue, then runs it.
@@ -65,7 +130,19 @@ class SearchEngine:
             SearchError: empty queue, or corpus not indexed.
             OllamaError: model unavailable — checked before scanning the corpus.
         """
-        raise NotImplementedError
+        self.client.ensure_model(manifest.model)
+        runs = RunsRepository(self.conn)
+        existing = runs.find_by_hash(manifest.hash)
+        if existing and existing[0].status is not RunStatus.DONE:
+            return self.resume(existing[0].run_id, limit=limit)
+
+        run_id = runs.create(
+            manifest_path=str(manifest.path),
+            manifest_hash=manifest.hash,
+            manifest_snapshot=manifest.source,
+            model=manifest.model,
+        )
+        return self._run(run_id, manifest.manifest, limit=limit)
 
     def resume(self, run_id: int, *, limit: int | None = None) -> SearchOutcome:
         """Resumes an interrupted search.
@@ -77,7 +154,14 @@ class SearchEngine:
         Raises:
             SearchError: unknown or already finished search.
         """
-        raise NotImplementedError
+        row = _require_run(self.conn, run_id)
+        if row.status is RunStatus.DONE:
+            message = f"search {run_id} is already finished"
+            raise SearchError(message)
+
+        manifest = _manifest_from_run(self.conn, run_id)
+        self.client.ensure_model(manifest.model)
+        return self._run(run_id, manifest, limit=limit)
 
     def process_file(self, run_id: int, file_id: int) -> int:
         """Processes a file from its cursor and returns the number of chunks committed.
@@ -86,7 +170,58 @@ class SearchEngine:
         without being emitted: negligible cost compared to a call to the model, and no
         dependency on a byte offset that the slightest content change would invalidate.
         """
-        raise NotImplementedError
+        _require_run(self.conn, run_id)
+        manifest = _manifest_from_run(self.conn, run_id)
+        prefilter = Prefilter.compile(manifest.prefilter)
+        titles = SqliteTitleProvider(self.conn)
+        run_files = RunFilesRepository(self.conn)
+        counters = _Counters()
+        archives: dict[tuple[str, str], CorpusArchive] = {}
+
+        try:
+            state = _open_file(
+                self.conn, archives, self.settings, run_id, file_id, manifest, titles
+            )
+            if state is None:
+                return 0
+            chunk = _next_evaluable_chunk(
+                self.conn,
+                run_id=run_id,
+                file_id=file_id,
+                model=manifest.model,
+                state=state,
+                prefilter=prefilter,
+                counters=counters,
+            )
+            while chunk is not None:
+                try:
+                    completion = _complete_chunk(self.client, manifest, state, chunk)
+                except OllamaError as exc:
+                    run_files.mark_error(run_id, file_id, str(exc))
+                    return counters.chunks_done + counters.chunks_skipped
+                _commit_completion(
+                    self.conn,
+                    run_id=run_id,
+                    file_id=file_id,
+                    chunk=chunk,
+                    manifest=manifest,
+                    completion=completion,
+                    counters=counters,
+                )
+                chunk = _next_evaluable_chunk(
+                    self.conn,
+                    run_id=run_id,
+                    file_id=file_id,
+                    model=manifest.model,
+                    state=state,
+                    prefilter=prefilter,
+                    counters=counters,
+                )
+            run_files.mark_done(run_id, file_id)
+        finally:
+            for archive in archives.values():
+                archive.close()
+        return counters.chunks_done + counters.chunks_skipped
 
     def request_stop(self) -> None:
         """Requests a stop at the next chunk boundary.
@@ -94,4 +229,336 @@ class SearchEngine:
         Called from the SIGINT handler. Never cuts off an in-flight call: the chunk
         finishes, commits, and the stop happens afterward.
         """
-        raise NotImplementedError
+        self._stop_event.set()
+
+    def _run(self, run_id: int, manifest: SearchManifest, *, limit: int | None) -> SearchOutcome:
+        """Shared driving logic for `start` and `resume`: enqueue, then process."""
+        runs = RunsRepository(self.conn)
+        runs.set_status(run_id, RunStatus.RUNNING)
+        planner.enqueue(self.conn, run_id=run_id, select=manifest.select)
+
+        _done, planned = planner.plan_size(self.conn, run_id)
+        if planned == 0:
+            runs.set_status(run_id, RunStatus.FAILED)
+            message = "no file in the corpus matches this manifest's select filters"
+            raise SearchError(message)
+
+        prefilter = Prefilter.compile(manifest.prefilter)
+        outcome = self._process_queue(run_id, manifest, prefilter, limit=limit)
+        runs.set_status(run_id, RunStatus.PAUSED if outcome.interrupted else RunStatus.DONE)
+        return outcome
+
+    def _process_queue(
+        self,
+        run_id: int,
+        manifest: SearchManifest,
+        prefilter: Prefilter,
+        *,
+        limit: int | None,
+    ) -> SearchOutcome:
+        """Processes every pending file, up to `Settings.concurrency` in flight at once."""
+        titles = SqliteTitleProvider(self.conn)
+        run_files = RunFilesRepository(self.conn)
+        archives: dict[tuple[str, str], CorpusArchive] = {}
+        counters = _Counters()
+        concurrency = max(1, self.settings.concurrency)
+        pending = planner.iter_work(self.conn, run_id=run_id, limit=limit)
+
+        try:
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                active: dict[Future[Completion], tuple[int, _FileState, Chunk]] = {}
+
+                def _admit() -> bool:
+                    if self._stop_event.is_set():
+                        return False
+                    for planned in pending:
+                        state = _open_file(
+                            self.conn,
+                            archives,
+                            self.settings,
+                            run_id,
+                            planned.file_id,
+                            manifest,
+                            titles,
+                        )
+                        if state is None:
+                            continue
+                        chunk = _next_evaluable_chunk(
+                            self.conn,
+                            run_id=run_id,
+                            file_id=planned.file_id,
+                            model=manifest.model,
+                            state=state,
+                            prefilter=prefilter,
+                            counters=counters,
+                        )
+                        if chunk is None:
+                            run_files.mark_done(run_id, planned.file_id)
+                            state.stream.close()
+                            counters.files_done += 1
+                            continue
+                        future = executor.submit(
+                            _complete_chunk, self.client, manifest, state, chunk
+                        )
+                        active[future] = (planned.file_id, state, chunk)
+                        return True
+                    return False
+
+                while len(active) < concurrency and _admit():
+                    pass
+
+                while active:
+                    finished, _still_running = wait(active, return_when=FIRST_COMPLETED)
+                    for future in finished:
+                        file_id, state, chunk = active.pop(future)
+                        try:
+                            completion = future.result()
+                        except OllamaError as exc:
+                            run_files.mark_error(run_id, file_id, str(exc))
+                            state.stream.close()
+                            counters.files_done += 1
+                            continue
+
+                        _commit_completion(
+                            self.conn,
+                            run_id=run_id,
+                            file_id=file_id,
+                            chunk=chunk,
+                            manifest=manifest,
+                            completion=completion,
+                            counters=counters,
+                        )
+
+                        if self._stop_event.is_set():
+                            state.stream.close()
+                            continue
+
+                        next_chunk = _next_evaluable_chunk(
+                            self.conn,
+                            run_id=run_id,
+                            file_id=file_id,
+                            model=manifest.model,
+                            state=state,
+                            prefilter=prefilter,
+                            counters=counters,
+                        )
+                        if next_chunk is None:
+                            run_files.mark_done(run_id, file_id)
+                            state.stream.close()
+                            counters.files_done += 1
+                        else:
+                            next_future = executor.submit(
+                                _complete_chunk, self.client, manifest, state, next_chunk
+                            )
+                            active[next_future] = (file_id, state, next_chunk)
+
+                    while len(active) < concurrency and _admit():
+                        pass
+        finally:
+            for archive in archives.values():
+                archive.close()
+
+        return SearchOutcome(
+            run_id=run_id,
+            files_done=counters.files_done,
+            chunks_done=counters.chunks_done,
+            chunks_skipped=counters.chunks_skipped,
+            matches=counters.matches,
+            interrupted=self._stop_event.is_set(),
+        )
+
+
+def _require_run(conn: "sqlite3.Connection", run_id: int) -> RunRow:
+    """Fetches a run's row, or raises `SearchError` if it doesn't exist."""
+    row = RunsRepository(conn).get(run_id)
+    if row is None:
+        message = f"unknown search: {run_id}"
+        raise SearchError(message)
+    return row
+
+
+def _manifest_from_run(conn: "sqlite3.Connection", run_id: int) -> SearchManifest:
+    """Re-parses a run's manifest from its archived snapshot, never from disk."""
+    snapshot = RunsRepository(conn).get_manifest_snapshot(run_id)
+    if snapshot is None:
+        message = f"unknown search: {run_id}"
+        raise SearchError(message)
+    raw: object = yaml.safe_load(snapshot)
+    return SearchManifest.model_validate(raw)
+
+
+def _get_archive(
+    archives: dict[tuple[str, str], CorpusArchive],
+    conn: "sqlite3.Connection",
+    settings: "Settings",
+    opus_version: str,
+    language: str,
+) -> CorpusArchive | None:
+    """Returns the (cached) archive backing a file's `(opus_version, language)`.
+
+    One `CorpusArchive` per distinct pair for the lifetime of a run — opening one reloads
+    the whole central directory, far too costly to redo per file.
+    """
+    key = (opus_version, language)
+    cached = archives.get(key)
+    if cached is not None:
+        return cached
+    download = CorpusDownloadsRepository(conn).get(
+        opus_corpus=settings.opus_corpus, opus_version=opus_version, language=language
+    )
+    if download is None or download.archive_path is None:
+        return None
+    archive = CorpusArchive(Path(download.archive_path))
+    archives[key] = archive
+    return archive
+
+
+def _open_file(
+    conn: "sqlite3.Connection",
+    archives: dict[tuple[str, str], CorpusArchive],
+    settings: "Settings",
+    run_id: int,
+    file_id: int,
+    manifest: SearchManifest,
+    titles: SqliteTitleProvider,
+) -> _FileState | None:
+    """Opens a file's member stream and positions its chunk generator at its cursor.
+
+    Returns `None` (logging why) when the file cannot be processed at all: vanished from
+    the catalog, no downloaded archive for its `(opus_version, language)`, or an unreadable
+    member — each of these is a per-file problem, not a reason to abort the whole search.
+    """
+    file_row = SubtitleFilesRepository(conn).get(file_id)
+    if file_row is None:
+        _log.warning("file %d vanished from the catalog, skipping", file_id)
+        return None
+
+    archive = _get_archive(archives, conn, settings, file_row.opus_version, file_row.language)
+    if archive is None:
+        _log.warning(
+            "no downloaded archive for %s/%s: skipping file %d",
+            file_row.opus_version,
+            file_row.language,
+            file_id,
+        )
+        return None
+
+    checkpoint = load_checkpoint(conn, run_id=run_id, file_id=file_id)
+    start_index, start_chunk_index = resume_position(
+        checkpoint, size=manifest.chunk.size, overlap=manifest.chunk.overlap
+    )
+
+    try:
+        stream = archive.open_member(file_row.rel_path)
+    except CorpusError as exc:
+        RunFilesRepository(conn).mark_error(run_id, file_id, str(exc))
+        _log.warning("could not open %s: %s", file_row.rel_path, exc)
+        return None
+
+    sentences = iter_sentences(stream, start_index=start_index)
+    chunks = iter_chunks(
+        sentences,
+        size=manifest.chunk.size,
+        overlap=manifest.chunk.overlap,
+        start_chunk_index=start_chunk_index,
+    )
+    title = titles.resolve(file_row.imdb_id)
+    return _FileState(
+        file_id=file_id, stream=stream, chunks=chunks, title=title, imdb_id=file_row.imdb_id
+    )
+
+
+def _next_evaluable_chunk(
+    conn: "sqlite3.Connection",
+    *,
+    run_id: int,
+    file_id: int,
+    model: str,
+    state: _FileState,
+    prefilter: Prefilter,
+    counters: _Counters,
+) -> "Chunk | None":
+    """Pulls chunks until one needs a model call, committing prefiltered ones inline.
+
+    A prefiltered-out chunk still gets a `results` row (``matched=False, payload=None``):
+    `commit_chunk` is the only way to advance the cursor, and `results` stays a gapless
+    ledger of every `chunk_index` for the file.
+    """
+    for chunk in state.chunks:
+        if prefilter.enabled and not prefilter.keeps(chunk.render(with_ids=False)):
+            commit_chunk(
+                conn,
+                run_id=run_id,
+                file_id=file_id,
+                chunk=chunk,
+                matched=False,
+                payload=None,
+                model=model,
+                latency_ms=None,
+            )
+            counters.chunks_skipped += 1
+            continue
+        return chunk
+    return None
+
+
+def _effective_schema(output: "OutputConfig") -> "Mapping[str, JsonValue] | None":
+    """What to ask Ollama to constrain generation to, derived from `output.format`.
+
+    This policy lives here, not in `glyphwell.ollama.client`, which stays decoupled from
+    `glyphwell.manifest`.
+    """
+    if output.format == "text":
+        return None
+    if output.json_schema is not None:
+        return output.json_schema
+    return {"type": "object"}
+
+
+def _complete_chunk(
+    client: "LlmClient", manifest: SearchManifest, state: _FileState, chunk: "Chunk"
+) -> "Completion":
+    """Renders a chunk's prompt and submits it to the model.
+
+    A free function (not a method) so it can be handed to `ThreadPoolExecutor.submit`
+    without capturing `self`.
+    """
+    context = render_context(chunk=chunk, title=state.title, imdb_id=state.imdb_id)
+    system = None if manifest.prompt.system is None else render(manifest.prompt.system, context)
+    user = render(manifest.prompt.user, context)
+    return client.complete(
+        model=manifest.model,
+        user=user,
+        system=system,
+        options=manifest.options,
+        json_schema=_effective_schema(manifest.output),
+    )
+
+
+def _commit_completion(
+    conn: "sqlite3.Connection",
+    *,
+    run_id: int,
+    file_id: int,
+    chunk: "Chunk",
+    manifest: SearchManifest,
+    completion: "Completion",
+    counters: _Counters,
+) -> None:
+    """Validates a model response and commits it, updating the running counters."""
+    validated = validate_output(
+        completion.text, output=manifest.output, match_when=manifest.match_when
+    )
+    commit_chunk(
+        conn,
+        run_id=run_id,
+        file_id=file_id,
+        chunk=chunk,
+        matched=validated.matched,
+        payload=validated.payload,
+        model=completion.model,
+        latency_ms=completion.latency_ms,
+    )
+    counters.chunks_done += 1
+    if validated.matched:
+        counters.matches += 1

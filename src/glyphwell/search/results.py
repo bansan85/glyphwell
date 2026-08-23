@@ -4,13 +4,18 @@ The schema constraint sent to Ollama reduces deviations but does not eliminate t
 response is therefore re-checked here against the manifest's JSON Schema before being
 written.
 
-STATUS: stubs, apart from the value object.
+STATUS: `validate_output` is implemented; `export_run` and `summary` (``search export``
+and ``search status``) remain stubs.
 """
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
+import jsonschema
+from pydantic import TypeAdapter, ValidationError
+
+from glyphwell.errors import ModelOutputError
 from glyphwell.types import JsonObject
 
 if TYPE_CHECKING:
@@ -20,6 +25,8 @@ if TYPE_CHECKING:
 
     from glyphwell.manifest.model import OutputConfig
     from glyphwell.metadata.resolver import TitleProvider
+
+_JSON_OBJECT_ADAPTER: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
 
 __all__ = ["ExportFormat", "ValidatedOutput", "export_run", "validate_output"]
 
@@ -60,7 +67,34 @@ def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None)
         ModelOutputError: unreadable JSON, non-conforming to the schema, or `match_when`
             field missing or not boolean.
     """
-    raise NotImplementedError
+    if output.format == "text":
+        # `SearchManifest` forbids `match_when` together with `format = text`: nothing
+        # to check it against, every produced chunk counts as a match.
+        return ValidatedOutput(payload=None, matched=True)
+
+    try:
+        payload = _JSON_OBJECT_ADAPTER.validate_json(raw)
+    except ValidationError as exc:
+        message = f"model response is not a valid JSON object: {exc}"
+        raise ModelOutputError(message) from exc
+
+    if output.json_schema is not None:
+        try:
+            jsonschema.validate(payload, output.json_schema)
+        except jsonschema.ValidationError as exc:
+            message = f"response does not conform to output.schema: {exc.message}"
+            raise ModelOutputError(message) from exc
+
+    if match_when is None:
+        return ValidatedOutput(payload=payload, matched=True)
+    if match_when not in payload:
+        message = f"match_when field {match_when!r} missing from response"
+        raise ModelOutputError(message)
+    matched = payload[match_when]
+    if not isinstance(matched, bool):
+        message = f"match_when field {match_when!r} is not a boolean: {matched!r}"
+        raise ModelOutputError(message)
+    return ValidatedOutput(payload=payload, matched=matched)
 
 
 def export_run(
