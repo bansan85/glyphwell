@@ -25,9 +25,12 @@ CREATE TABLE IF NOT EXISTS titles (
     imported_at      TEXT NOT NULL DEFAULT (datetime('now'))
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS idx_titles_parent ON titles (parent_imdb_id)
-    WHERE parent_imdb_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_titles_type_year ON titles (title_type, start_year);
+-- Deliberately no secondary index here (e.g. on parent_imdb_id or (title_type,
+-- start_year)): the only lookup direction this project needs is imdb_id -> title,
+-- already served by the primary key. A secondary index's keys don't correlate with
+-- title.basics.tsv's insertion order, so maintaining one during the bulk import of
+-- millions of rows roughly halves throughput (measured) for a query pattern nothing
+-- here performs. See db/migrations.py version 2.
 
 -- ---------------------------------------------------------------------------
 -- Corpus subtitle files

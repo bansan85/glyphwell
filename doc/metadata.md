@@ -15,7 +15,9 @@ uv run glyphwell metadata import-imdb   # imports into the titles table
 `fetch-imdb` downloads `title.basics.tsv.gz` and `title.episode.tsv.gz` into
 `<data-dir>/downloads`. `import-imdb` reads them and populates `titles`; episodes are
 processed after base titles, so that attaching an episode to its series finds a row that
-already exists.
+already exists. Each file gets its own progress bar, driven by bytes read from disk —
+not a row count, which for `title.basics` would mean a full pass over a gigabyte-plus
+file before showing anything.
 
 ## Where the data comes from
 
@@ -86,12 +88,17 @@ sqlite3 data/glyphwell.db \
 
 Both files together are on the order of 22 million rows. `import_basics`/
 `import_episodes` read them positionally (not through `csv.DictReader`) and commit in
-batches of 50 000 rows — see CLAUDE.md §6 for what was measured and why. In practice the
-dominant remaining cost is disk write latency, not Python: on a mechanical (HDD) disk,
-commit latency alone can keep the import close to an order of magnitude slower than on
-an SSD. If `import-imdb` feels slow, point `--database` (or `GLYPHWELL_DATABASE`) at
-your fastest local disk — the source `.tsv` files can stay wherever they were downloaded,
-since reading them is sequential.
+batches of 50 000 rows — see CLAUDE.md §6 for what was measured and why. `titles` also
+carries no secondary index (ADR-0011): the only lookup this project performs is
+`imdb_id -> title`, already served by the primary key, and maintaining an index whose
+keys don't correlate with the file's insertion order was measured to roughly halve
+throughput and to degrade further as the table grows.
+
+In practice the dominant remaining cost is disk write latency, not Python: on a
+mechanical (HDD) disk, commit latency alone can keep the import close to an order of
+magnitude slower than on an SSD. If `import-imdb` feels slow, point `--database` (or
+`GLYPHWELL_DATABASE`) at your fastest local disk — the source `.tsv` files can stay
+wherever they were downloaded, since reading them is sequential.
 
 ## Troubleshooting
 

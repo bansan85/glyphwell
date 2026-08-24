@@ -101,7 +101,27 @@ below sit under `Unreleased`.
   total wall-clock time. Combined with a larger batch size (50 000 rows/transaction, up
   from an initial 10 000), throughput went from ~11 400 rows/s to ~50-70 000 rows/s on
   SSD-backed storage — see `doc/metadata.md#performance` for the (larger) effect of disk
-  choice on top of this.
+  choice on top of this. Confirmed on one real, complete, end-to-end run: all
+  12,734,722 rows of `title.basics.tsv` imported and all 9,845,113 `title.episode.tsv`
+  links attached.
+- **Progress bar for `import-imdb`.** `import_basics`/`import_episodes` accept an
+  optional `progress: ProgressCallback` (`Callable[[int, int], None]`, bytes read so
+  far and total file size), reported every 50 000 rows through the file's raw binary
+  handle so the count stays accurate through gzip decompression. Driven by the file's
+  size on disk rather than a row count, which for `title.basics` would mean a full read
+  before showing anything. `metadata import-imdb` wires it into a Rich progress bar per
+  file, matching `corpus fetch`'s style.
+- **No secondary index on `titles` (ADR-0011).** `idx_titles_parent` and
+  `idx_titles_type_year`, present in the initial schema, are gone: the only lookup this
+  project performs is `imdb_id -> title`, already served by the primary key, and neither
+  index's keys correlate with `title.basics.tsv`'s insertion order. Measured on a 4M-row
+  real slice: maintaining either one during the bulk import roughly halved throughput
+  and made it visibly degrade further as the table grew (a classic
+  unsorted-secondary-index-during-bulk-load cost). Removed via a `db/migrations.py`
+  version-2 migration, so an already-initialized database is upgraded, not just a fresh
+  one. `SelectConfig.title_types`/`years` (`manifest/model.py`) will need a purpose-built
+  index back once `search/planner.py` actually implements that prefilter — see ADR-0011
+  *Risks*.
 
 #### Documentation
 
@@ -195,7 +215,7 @@ raise `NotImplementedError` at this stage; see *Known limitations*.
 | `glyphwell.manifest` | `LoadedManifest`, `Prefilter`, `SearchManifest`, `load`, `manifest_hash` |
 | `glyphwell.manifest.model` | `ChunkConfig`, `OutputConfig`, `OutputFormat`, `PrefilterConfig`, `PrefilterMode`, `PromptConfig`, `SearchManifest`, `SelectConfig`, `YearRange` |
 | `glyphwell.metadata` | `ImdbDataset`, `SqliteTitleProvider`, `Title`, `TitleProvider` |
-| `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `download`, `import_basics`, `import_episodes`, `iter_rows`, `locate_dataset` |
+| `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `ProgressCallback`, `download`, `import_basics`, `import_episodes`, `iter_rows`, `locate_dataset` |
 | `glyphwell.ollama` | `Completion`, `LlmClient`, `OllamaClient`, `PromptContext`, `render`, `render_context` |
 | `glyphwell.ollama.prompts` | `PLACEHOLDERS`, `PromptContext`, `render`, `render_context` |
 | `glyphwell.search` | `Checkpoint`, `ExportFormat`, `PlannedFile`, `SearchEngine`, `SearchOutcome`, `ValidatedOutput`, `commit_chunk`, `enqueue`, `export_run`, `iter_work`, `load_checkpoint`, `validate_output` |
@@ -247,21 +267,26 @@ glyphwell search    run | resume | status | export
   rows and the link is lost without an error. `import-imdb` always runs the two passes in
   the right order, but nothing currently compares "links attempted" against
   `set_episode_links_many`'s returned count to surface a partial run.
-- **The full-scale import has not been observed to run to completion in development.**
-  Verified at sample scale (up to ~2M real rows) and via one real run that imported
-  6.86M of `title.basics.tsv`'s 12.7M rows before being interrupted; the throughput
-  figures above are extrapolated from those runs, not measured end to end on the full
-  ~22.5M rows of both files together.
 - **Import throughput is largely disk-bound, and no code change fixes that.** Measured on
   the development machine: the same optimized code reached ~50-70 000 rows/s with the
   database on an SSD, but only ~9 700 rows/s — barely above the pre-optimization
-  baseline — with the database on a mechanical HDD. See `doc/metadata.md#performance`.
-- **The schema changed shape without a version bump.** `subtitle_files.opus_file_id` became
-  `opensubtitles_file_id` and `corpus_downloads.extracted_at` became `verified_at`, while
-  `SCHEMA_VERSION` stays at 1 and `_MIGRATIONS` stays empty. A database created before this
-  change therefore passes `ensure_current` and then fails at runtime on a missing column.
-  Delete `data/glyphwell.db` and run `glyphwell db init` again. This is acceptable only
-  because `data/` is gitignored and fully reconstructible, and nothing is released.
+  baseline — with the database on a mechanical HDD (measured before ADR-0011's index
+  removal; removing them narrows this gap but does not close it, since disk commit
+  latency is not an indexing cost). See `doc/metadata.md#performance`.
+- **`SelectConfig.title_types`/`years` (`manifest/model.py`) will need a new index once
+  implemented.** ADR-0011 removed `idx_titles_type_year` and `idx_titles_parent` because
+  nothing queries `titles` that way today, but the manifest schema already declares a
+  type/year prefilter for a future `search/planner.py` to consume. Whoever implements
+  that filter should add a purpose-built index via a new migration, not assume either
+  dropped index is still there.
+- **Some schema changes still predate any version bump.** `SCHEMA_VERSION` is now `2`
+  (the index removal above is `db/migrations.py`'s first real migration), but two
+  earlier renames — `subtitle_files.opus_file_id` to `opensubtitles_file_id` and
+  `corpus_downloads.extracted_at` to `verified_at` — were made directly in `schema.sql`
+  while it was still "version 1" and have no corresponding migration. A database
+  created before those renames passes `ensure_current` and then fails at runtime on a
+  missing column. Delete `data/glyphwell.db` and run `glyphwell db init` again. Acceptable
+  only because `data/` is gitignored and fully reconstructible, and nothing is released.
 - `SubtitleFileRow.file_id` is typed `int`, so `SubtitleFilesRepository.upsert` cannot be
   handed a row that has not been inserted yet. `CorpusDownloadRow.download_id` is
   `int | None` and does not have the defect; the other row types were left as they were.
@@ -288,3 +313,4 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0008 — never extract the corpus archive
 - ADR-0009 — use opustools as the OPUS index only, and httpx for the transfer
 - ADR-0010 — two-pass IMDb import: coalescing upsert plus a dedicated episode-link update
+- ADR-0011 — drop the secondary indexes on `titles`

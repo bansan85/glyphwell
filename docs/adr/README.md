@@ -21,6 +21,7 @@ recorded here.
 | [0008](0008-never-extract-the-corpus-archive.md) | Never extract the corpus archive | Accepted | 2026-08-25 |
 | [0009](0009-opustools-for-index-httpx-for-transfer.md) | Use opustools as the OPUS index only, and httpx for the transfer | Accepted | 2026-08-25 |
 | [0010](0010-two-pass-imdb-import-with-episode-link-update.md) | Two-pass IMDb import: coalescing upsert plus a dedicated episode-link update | Accepted | 2026-08-22 |
+| [0011](0011-drop-secondary-indexes-on-titles.md) | Drop the secondary indexes on `titles` | Accepted | 2026-08-25 |
 
 ## Statuses
 

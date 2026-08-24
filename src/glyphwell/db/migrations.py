@@ -17,12 +17,21 @@ __all__ = ["SCHEMA_VERSION", "current_version", "ensure_current", "initialize", 
 
 _log = get_logger(__name__)
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 """Schema version expected by this code."""
 
 # Migration steps to apply to go from version N-1 to version N.
 # Version 1 is produced by `schema.sql` and therefore does not appear here.
-_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
+_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {
+    # Drops the two `titles` indexes supporting a title/year -> imdb_id (or series ->
+    # episodes) lookup direction this project never uses. `schema.sql` no longer
+    # creates them for a fresh database; this brings an existing version-1 database in
+    # line. See the comment in schema.sql for why.
+    2: (
+        "DROP INDEX IF EXISTS idx_titles_parent",
+        "DROP INDEX IF EXISTS idx_titles_type_year",
+    ),
+}
 
 
 def schema_sql() -> str:

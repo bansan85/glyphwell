@@ -202,12 +202,26 @@ IMDb datasets already give exactly.
   10 000 to 50 000 rows per transaction cut wall-clock time by about another 25% (fewer
   WAL commits). Combined, throughput on SSD-backed storage went from ~11 400 rows/s to
   ~50 000-70 000 rows/s.
+- **No secondary index on `titles`.** The only lookup direction this project needs is
+  `imdb_id -> title`, already served by the primary key: there is deliberately no index
+  on `parent_imdb_id` or `(title_type, start_year)` (see `db/migrations.py` version 2).
+  Those would only serve a title/year -> imdb_id or series -> episodes query nothing
+  here performs, and their keys don't correlate with `title.basics.tsv`'s insertion
+  order: measured on the real dataset, maintaining just one such index while bulk
+  importing roughly halves throughput and makes it visibly *degrade* as the index
+  outgrows the page cache (a classic unsorted-secondary-index-during-bulk-load cost).
+  If a future feature genuinely needs one of these lookup directions, add the index
+  back as a new migration — don't just uncomment old DDL, since a fresh `db init` and
+  an upgraded database must end up with the same schema.
 - **Import throughput is largely disk-bound, and no amount of the above fixes that.**
   On the same code, a mechanical (HDD) disk measured at ~9 700 rows/s — barely above the
   *pre-optimization* baseline — against ~50 000-70 000 rows/s on SSD-backed storage for
-  the identical workload. If `import-imdb` is slow, check where `--database` /
-  `GLYPHWELL_DATABASE` points before touching the code again; see
-  [doc/metadata.md#performance](doc/metadata.md#performance).
+  the identical workload: on the full ~22M-row catalog (see
+  [doc/metadata.md#performance](doc/metadata.md#performance)), that's roughly
+  **~39 minutes** on an HDD against **~6 minutes** on an SSD. If `import-imdb` is slow,
+  check where `--database` / `GLYPHWELL_DATABASE` points before touching the code
+  again — the source `.tsv`/`.tsv.gz` files themselves can stay on slower storage,
+  since reading them is sequential.
 
 What the IMDb datasets don't give: any popularity measure. If a filter like that becomes
 necessary, the IMDb-native route is `title.ratings.tsv.gz` (`averageRating`, `numVotes`),
