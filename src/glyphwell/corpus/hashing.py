@@ -1,7 +1,7 @@
-"""Empreintes de fichiers.
+"""File checksums.
 
-La clé de fraîcheur d'un sous-titre est ``(opus_version, sha256)`` : c'est cette empreinte
-qui décide si les résultats d'un fichier doivent être invalidés.
+The freshness key of a subtitle is ``(opus_version, sha256)``: this checksum is what
+decides whether a file's results must be invalidated.
 """
 
 import hashlib
@@ -13,18 +13,18 @@ from glyphwell.types import Sha256
 __all__ = ["DEFAULT_CHUNK_SIZE", "sha256_file"]
 
 DEFAULT_CHUNK_SIZE: Final = 1 << 20
-"""1 Mio : le corpus compte des centaines de milliers de fichiers, on ne les charge pas."""
+"""1 MiB: the corpus holds hundreds of thousands of files, we don't load them whole."""
 
 
 def sha256_file(path: Path, *, chunk_size: int = DEFAULT_CHUNK_SIZE) -> Sha256:
-    """Calcule le SHA-256 d'un fichier par blocs.
+    """Computes the SHA-256 of a file in blocks.
 
     Args:
-        path: fichier à hacher.
-        chunk_size: taille de lecture, en octets.
+        path: file to hash.
+        chunk_size: read size, in bytes.
 
     Returns:
-        L'empreinte en hexadécimal minuscule.
+        The checksum in lowercase hexadecimal.
     """
     digest = hashlib.sha256()
     with path.open("rb") as handle:

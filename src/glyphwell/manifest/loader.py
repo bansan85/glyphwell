@@ -1,9 +1,8 @@
-"""Chargement et hachage d'un manifeste de recherche.
+"""Loading and hashing a search manifest.
 
-Le hash du texte source identifie la recherche : modifier le YAML produit un hash différent,
-donc un nouveau run, au lieu de mélanger des résultats obtenus avec deux prompts distincts.
-C'est aussi ce qui permet de reprendre en toute sécurité — on vérifie que le manifeste n'a
-pas bougé depuis le lancement.
+The hash of the source text identifies the search: modifying the YAML produces a different
+hash, hence a new run, instead of mixing results obtained with two distinct prompts. It is
+also what makes resuming safe — we verify that the manifest has not changed since launch.
 """
 
 import hashlib
@@ -22,14 +21,14 @@ __all__ = ["LoadedManifest", "load", "manifest_hash"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LoadedManifest:
-    """Un manifeste validé, accompagné de son origine et de son empreinte.
+    """A validated manifest, together with its origin and its checksum.
 
     Attributes:
-        manifest: le manifeste validé.
-        path: fichier d'où il provient.
-        source: texte YAML intégral, archivé dans `runs.manifest_snapshot` pour qu'un run
-            reste interprétable même si le fichier change ensuite.
-        hash: empreinte du texte source.
+        manifest: the validated manifest.
+        path: file it comes from.
+        source: full YAML text, archived in `runs.manifest_snapshot` so a run stays
+            interpretable even if the file changes afterward.
+        hash: checksum of the source text.
     """
 
     manifest: SearchManifest
@@ -39,65 +38,65 @@ class LoadedManifest:
 
     @property
     def name(self) -> str:
-        """Nom de la recherche, tel que déclaré dans le manifeste."""
+        """Name of the search, as declared in the manifest."""
         return self.manifest.name
 
     @property
     def model(self) -> str:
-        """Modèle Ollama demandé."""
+        """Requested Ollama model."""
         return self.manifest.model
 
 
 def manifest_hash(source: str) -> Sha256:
-    """Calcule l'empreinte d'un manifeste à partir de son texte source.
+    """Computes the checksum of a manifest from its source text.
 
-    Les fins de ligne sont normalisées avant hachage : un même manifeste doit produire la
-    même empreinte selon qu'il a été récupéré sous Windows ou sous Linux. Rien d'autre n'est
-    normalisé — un commentaire modifié change bien l'empreinte, et c'est voulu : on préfère
-    créer un run distinct plutôt que de risquer de réutiliser des résultats issus d'une
-    version différente du fichier.
+    Line endings are normalized before hashing: the same manifest must produce the same
+    checksum whether it was fetched on Windows or on Linux. Nothing else is normalized —
+    an edited comment does change the checksum, and that is intentional: it is preferable
+    to create a separate run rather than risk reusing results from a different version of
+    the file.
     """
     normalized = source.replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def load(path: str | Path) -> LoadedManifest:
-    """Lit, valide et hache un manifeste de recherche.
+    """Reads, validates and hashes a search manifest.
 
     Args:
-        path: chemin du fichier YAML.
+        path: path to the YAML file.
 
     Returns:
-        Le manifeste validé, son texte source et son empreinte.
+        The validated manifest, its source text and its checksum.
 
     Raises:
-        ManifestError: fichier absent, YAML mal formé, ou manifeste invalide.
+        ManifestError: missing file, malformed YAML, or invalid manifest.
     """
     manifest_path = Path(path)
 
     try:
         source = manifest_path.read_text(encoding="utf-8")
     except OSError as exc:
-        message = f"manifeste illisible : {manifest_path} ({exc})"
+        message = f"unreadable manifest: {manifest_path} ({exc})"
         raise ManifestError(message) from exc
 
     try:
-        # `safe_load` n'instancie aucun objet Python : un manifeste reste de la donnée.
-        # Le résultat est délibérément traité comme `object`, puis resserré par pydantic.
+        # `safe_load` does not instantiate any Python object: a manifest remains data.
+        # The result is deliberately treated as `object`, then narrowed by pydantic.
         raw: object = yaml.safe_load(source)
     except yaml.YAMLError as exc:
-        message = f"YAML mal formé dans {manifest_path} : {exc}"
+        message = f"malformed YAML in {manifest_path}: {exc}"
         raise ManifestError(message) from exc
 
     if not isinstance(raw, dict):
         kind = type(raw).__name__
-        message = f"{manifest_path} doit contenir un objet YAML à la racine, trouvé : {kind}"
+        message = f"{manifest_path} must contain a YAML mapping at the root, found: {kind}"
         raise ManifestError(message)
 
     try:
         manifest = SearchManifest.model_validate(raw)
     except ValidationError as exc:
-        message = f"manifeste invalide ({manifest_path}) :\n{exc}"
+        message = f"invalid manifest ({manifest_path}):\n{exc}"
         raise ManifestError(message) from exc
 
     return LoadedManifest(

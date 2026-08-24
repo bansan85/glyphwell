@@ -1,17 +1,17 @@
-"""Arborescence interne de l'archive OPUS OpenSubtitles.
+"""Internal layout of the OPUS OpenSubtitles archive.
 
-Nom des membres du zip, préfixe compris :
+Name of the zip members, prefix included:
 
-    <corpus>/<preprocessing>/<langue>/<année>/<imdb_id>/<opensubtitles_file_id>.xml
+    <corpus>/<preprocessing>/<language>/<year>/<imdb_id>/<opensubtitles_file_id>.xml
     OpenSubtitles/raw/fr/2022/1596342/1957893755.xml
 
-L'identifiant IMDb y apparaît **nu** (``1596342``), pas sous sa forme canonique
-(``tt1596342``). Toute la normalisation est concentrée ici.
+The IMDb identifier appears there **bare** (``1596342``), not in its canonical form
+(``tt1596342``). All normalization is concentrated here.
 
-L'archive n'étant jamais décompressée, ces chemins ne désignent aucun fichier du disque :
-ce sont les clés d'ouverture de `glyphwell.corpus.archive.CorpusArchive`.
+Since the archive is never decompressed, these paths designate no file on disk: they are
+the opening keys of `glyphwell.corpus.archive.CorpusArchive`.
 
-STATUT : stubs, hors constantes.
+STATUS: stubs, except for the constants.
 """
 
 import re
@@ -35,17 +35,17 @@ __all__ = [
 ]
 
 IMDB_ID_WIDTH: Final = 7
-"""Largeur minimale de la partie numérique d'un identifiant IMDb : ``tt0133093``.
+"""Minimum width of the numeric part of an IMDb identifier: ``tt0133093``.
 
-Les identifiants récents dépassent 7 chiffres et ne sont alors pas paddés du tout.
+Recent identifiers exceed 7 digits and are then not padded at all.
 """
 
 SUBTITLE_SUFFIXES: Final = (".xml",)
-"""Extensions des membres de sous-titres dans l'archive.
+"""Extensions of subtitle members in the archive.
 
-Les membres sont des XML simples : le zip est le seul niveau de compression. Tout membre
-d'un autre suffixe est compté et signalé par ``corpus fetch`` plutôt qu'absorbé
-silencieusement — ce serait le signe que cette hypothèse a cessé d'être vraie.
+Members are plain XML: the zip is the only level of compression. Any member with another
+suffix is counted and flagged by ``corpus fetch`` rather than silently absorbed — that
+would be the sign that this assumption has stopped being true.
 """
 
 _IMDB_NUMERIC = re.compile(r"^\d+$")
@@ -53,16 +53,16 @@ _IMDB_NUMERIC = re.compile(r"^\d+$")
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CorpusEntry:
-    """Un fichier de sous-titre localisé dans l'arborescence du corpus.
+    """A subtitle file located in the corpus layout.
 
     Attributes:
-        rel_path: nom du membre dans l'archive, préfixe compris, séparateurs ``/``.
-            C'est la clé naturelle du fichier en base, la clé de tri de la file de
-            travail, et la clé d'ouverture du membre.
-        language: code de langue OPUS.
-        year: année portée par l'arborescence, `None` si le répertoire n'est pas une année.
-        imdb_id: identifiant canonique, préfixe ``tt`` inclus.
-        opensubtitles_file_id: identifiant du sous-titre sur opensubtitles.org.
+        rel_path: name of the member in the archive, prefix included, ``/`` separators.
+            This is the file's natural key in the database, the sort key of the work
+            queue, and the member's opening key.
+        language: OPUS language code.
+        year: year carried by the layout, `None` if the directory is not a year.
+        imdb_id: canonical identifier, ``tt`` prefix included.
+        opensubtitles_file_id: identifier of the subtitle on opensubtitles.org.
     """
 
     rel_path: str
@@ -73,35 +73,35 @@ class CorpusEntry:
 
 
 def normalize_imdb_id(raw: str) -> ImdbId:
-    """Convertit un identifiant IMDb vers sa forme canonique ``tt#######``.
+    """Converts an IMDb identifier to its canonical ``tt#######`` form.
 
-    Accepte la forme nue du corpus (``133093``), déjà préfixée (``tt0133093``), et les
-    identifiants plus longs que sept chiffres, qui ne sont pas paddés.
+    Accepts the corpus's bare form (``133093``), an already-prefixed one (``tt0133093``),
+    and identifiers longer than seven digits, which are not padded.
 
     Args:
-        raw: identifiant tel qu'il apparaît dans un chemin ou un dataset.
+        raw: identifier as it appears in a path or a dataset.
 
     Returns:
-        L'identifiant canonique.
+        The canonical identifier.
 
     Raises:
-        CorpusLayoutError: la chaîne n'est pas un identifiant IMDb reconnaissable.
+        CorpusLayoutError: the string is not a recognizable IMDb identifier.
     """
     raise NotImplementedError
 
 
 def parse_entry(rel_path: Path) -> CorpusEntry:
-    """Interprète un chemin relatif du corpus.
+    """Interprets a relative corpus path.
 
     Args:
-        rel_path: nom d'un membre de l'archive, par exemple
+        rel_path: name of an archive member, for example
             ``OpenSubtitles/raw/en/1999/0133093/3660124.xml``.
 
     Returns:
-        L'entrée décrite par ce chemin.
+        The entry described by this path.
 
     Raises:
-        CorpusLayoutError: le chemin ne respecte pas l'arborescence attendue.
+        CorpusLayoutError: the path does not follow the expected layout.
     """
     raise NotImplementedError
 
@@ -111,17 +111,17 @@ def iter_corpus(
     *,
     language: LanguageCode | None = None,
 ) -> Iterator[CorpusEntry]:
-    """Parcourt l'archive et produit une entrée par membre de sous-titre.
+    """Walks the archive and yields one entry per subtitle member.
 
-    Générateur : l'archive compte des centaines de milliers de membres et ne doit jamais
-    être matérialisée en mémoire. Les noms qui ne respectent pas l'arborescence sont
-    journalisés puis ignorés, plutôt que d'interrompre un scan de plusieurs minutes.
+    Generator: the archive holds hundreds of thousands of members and must never be
+    materialized in memory. Names that do not follow the layout are logged then ignored,
+    rather than interrupting a scan lasting several minutes.
 
     Args:
-        archive: archive ouverte, jamais décompressée.
-        language: restreint le parcours à une langue, ou toutes si `None`.
+        archive: opened archive, never decompressed.
+        language: restricts the walk to one language, or all if `None`.
 
     Yields:
-        Les entrées rencontrées, dans un ordre non garanti — c'est le planner qui trie.
+        The entries encountered, in no guaranteed order — the planner is what sorts them.
     """
     raise NotImplementedError

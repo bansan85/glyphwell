@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "glyphwell"
 version = "0.1.0"
-description = "Télécharge le corpus de sous-titres OpenSubtitles, résout les titres IMDb et lance des recherches pilotées par Ollama."
+description = "Downloads the OpenSubtitles subtitle corpus, resolves IMDb titles, and runs Ollama-driven searches."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -47,7 +47,7 @@ glyphwell = "glyphwell.cli:main"
 packages = ["src/glyphwell"]
 
 # ---------------------------------------------------------------------------
-# ruff : lint + format
+# ruff: lint + format
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
@@ -60,18 +60,18 @@ select = [
   "E", "F", "I", "N", "UP", "B", "SIM", "C4", "PTH", "RET", "ARG", "TC", "ANN", "RUF",
 ]
 ignore = [
-  "ANN401", # `Any` est déjà interdit par mypy (disallow_any_explicit)
+  "ANN401", # `Any` is already forbidden by mypy (disallow_any_explicit)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Les commandes Typer déclarent leurs options via des valeurs par défaut appelées.
+# Typer commands declare their options via called default values.
 "src/glyphwell/cli/*.py" = ["B008"]
-# Les tests peuvent utiliser des assertions et des fixtures non consommées.
+# Tests may use assertions and unused fixtures.
 "tests/*" = ["ARG001", "ARG002"]
 
 [tool.ruff.lint.flake8-type-checking]
-# Ces classes et décorateurs évaluent leurs annotations à l'exécution : leurs imports
-# ne doivent jamais être déplacés dans un bloc `if TYPE_CHECKING`.
+# These classes and decorators evaluate their annotations at runtime: their imports
+# must never be moved into an `if TYPE_CHECKING` block.
 runtime-evaluated-base-classes = [
   "pydantic.BaseModel",
   "pydantic_settings.BaseSettings",
@@ -85,7 +85,7 @@ runtime-evaluated-decorators = [
 docstring-code-format = true
 
 # ---------------------------------------------------------------------------
-# mypy : mode très strict
+# mypy: strict mode
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"

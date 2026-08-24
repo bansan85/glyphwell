@@ -1,17 +1,17 @@
-"""Datasets IMDb officiels — source primaire des titres.
+"""Official IMDb datasets — primary source of titles.
 
-Deux fichiers suffisent :
+Two files are enough:
 
-* ``title.basics.tsv.gz`` : type, titre, année, durée, flag adulte, genres ;
-* ``title.episode.tsv.gz`` : rattachement d'un épisode à sa série, saison, numéro.
+* ``title.basics.tsv.gz``: type, title, year, runtime, adult flag, genres;
+* ``title.episode.tsv.gz``: an episode's link to its series, season, number.
 
-Ils sont **indexés par ``tconst``**, exactement l'identifiant que porte l'arborescence du
-corpus OPUS : la jointure est directe, hors-ligne, et ne consomme aucune clé API. C'est la
-seule source de métadonnées du projet.
+They are **indexed by ``tconst``**, exactly the identifier carried by the OPUS corpus
+tree: the join is direct, offline, and requires no API key. This is the project's only
+source of metadata.
 
-Piège du format : la valeur nulle est la chaîne littérale ``\\N``, pas une chaîne vide.
+Format pitfall: the null value is the literal string ``\\N``, not an empty string.
 
-STATUT : stubs, hors constantes.
+STATUS: stubs, apart from constants.
 """
 
 import sqlite3
@@ -31,73 +31,73 @@ __all__ = [
 ]
 
 BASE_URL: Final = "https://datasets.imdbws.com/"
-"""Les datasets non commerciaux IMDb, republiés quotidiennement."""
+"""IMDb's non-commercial datasets, republished daily."""
 
 NULL_MARKER: Final = r"\N"
-"""Marqueur de valeur absente dans les TSV IMDb. À distinguer de la chaîne vide."""
+"""Marker for a missing value in IMDb TSVs. Distinct from the empty string."""
 
 
 class ImdbDataset(StrEnum):
-    """Datasets utilisés. La valeur est le nom de fichier, donc aussi le suffixe de l'URL."""
+    """Datasets used. The value is the file name, hence also the URL suffix."""
 
     BASICS = "title.basics.tsv.gz"
     EPISODE = "title.episode.tsv.gz"
 
     @property
     def url(self) -> str:
-        """URL de téléchargement du dataset."""
+        """Download URL for the dataset."""
         return f"{BASE_URL}{self.value}"
 
 
 def download(dataset: ImdbDataset, *, dest_dir: Path, force: bool = False) -> Path:
-    """Télécharge un dataset et renvoie le chemin du fichier local.
+    """Downloads a dataset and returns the local file path.
 
     Args:
-        dataset: dataset visé.
-        dest_dir: répertoire de destination.
-        force: re-télécharge même si le fichier existe déjà.
+        dataset: dataset to download.
+        dest_dir: destination directory.
+        force: re-download even if the file already exists.
 
     Returns:
-        Le chemin du ``.tsv.gz`` local.
+        The local ``.tsv.gz`` path.
 
     Raises:
-        MetadataError: téléchargement impossible.
+        MetadataError: download failed.
     """
     raise NotImplementedError
 
 
 def iter_rows(path: Path) -> Iterator[Mapping[str, str | None]]:
-    """Produit les lignes d'un TSV IMDb, en-tête utilisé comme noms de colonnes.
+    """Yields the rows of an IMDb TSV, header used as column names.
 
-    Générateur : ``title.basics`` compte plus de dix millions de lignes. Les valeurs
-    ``\\N`` sont converties en `None`.
+    Generator: ``title.basics`` has more than ten million rows. ``\\N`` values are
+    converted to `None`.
 
     Raises:
-        MetadataError: fichier illisible ou en-tête inattendu.
+        MetadataError: file unreadable or unexpected header.
     """
     raise NotImplementedError
 
 
 def import_basics(conn: sqlite3.Connection, path: Path, *, batch_size: int = 10_000) -> int:
-    """Importe ``title.basics`` dans `titles` et renvoie le nombre de lignes écrites.
+    """Imports ``title.basics`` into `titles` and returns the number of rows written.
 
-    Écriture par lots dans une transaction unique par lot : un import interrompu laisse la
-    base cohérente et peut être relancé sans dédoublonnage (upsert sur `imdb_id`).
+    Written in batches, one transaction per batch: an interrupted import leaves the
+    database consistent and can be re-run without duplication (upsert on `imdb_id`).
 
     Raises:
-        MetadataError: fichier illisible.
-        DatabaseError: échec d'écriture.
+        MetadataError: file unreadable.
+        DatabaseError: write failed.
     """
     raise NotImplementedError
 
 
 def import_episodes(conn: sqlite3.Connection, path: Path, *, batch_size: int = 10_000) -> int:
-    """Importe ``title.episode`` et complète `titles` (parent, saison, épisode).
+    """Imports ``title.episode`` and completes `titles` (parent, season, episode).
 
-    À lancer après `import_basics` : les épisodes doivent déjà exister comme titres.
+    Must run after `import_basics`: episodes must already exist as titles.
 
     Raises:
-        MetadataError: fichier illisible.
-        DatabaseError: échec d'écriture.
+        MetadataError: file unreadable.
+        DatabaseError: write failed.
     """
     raise NotImplementedError

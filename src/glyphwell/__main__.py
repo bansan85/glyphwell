@@ -1,4 +1,4 @@
-"""Point d'entrée `python -m glyphwell`."""
+"""Entry point for `python -m glyphwell`."""
 
 from glyphwell.cli import main
 

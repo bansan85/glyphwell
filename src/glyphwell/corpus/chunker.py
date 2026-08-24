@@ -1,14 +1,14 @@
-"""Découpage d'un sous-titre en fenêtres glissantes.
+"""Splits a subtitle into sliding chunks.
 
-Une fenêtre est l'unité d'appel au modèle **et** l'unité de reprise. Le recouvrement évite
-qu'un passage à cheval sur deux fenêtres passe inaperçu.
+A chunk is the unit of model calls **and** the unit of resume. The overlap keeps a passage
+straddling two chunks from going unnoticed.
 
-Le découpage doit être **déterministe** : pour un fichier et un ``(size, overlap)`` donnés,
-`Chunk.index` désigne toujours la même plage de phrases. C'est ce qui rend la contrainte
-``UNIQUE(run_id, file_id, chunk_index)`` de la table `results` utilisable comme garantie
-d'idempotence.
+The chunking must be **deterministic**: for a given file and a given ``(size, overlap)``,
+`Chunk.index` always designates the same range of sentences. This is what makes the
+``UNIQUE(run_id, file_id, chunk_index)`` constraint on the `results` table usable as an
+idempotency guarantee.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, except for the value object.
 """
 
 from collections.abc import Iterable, Iterator
@@ -23,11 +23,11 @@ __all__ = ["Chunk", "chunk_count", "iter_chunks"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Chunk:
-    """Une fenêtre de phrases consécutives.
+    """A chunk of consecutive sentences.
 
     Attributes:
-        index: position de la fenêtre dans le fichier, à partir de 0.
-        sentences: les phrases de la fenêtre, dans l'ordre. Jamais vide.
+        index: position of the chunk in the file, starting at 0.
+        sentences: the sentences of the chunk, in order. Never empty.
     """
 
     index: int
@@ -35,20 +35,20 @@ class Chunk:
 
     @property
     def first(self) -> "Sentence":
-        """Première phrase de la fenêtre."""
+        """First sentence of the chunk."""
         return self.sentences[0]
 
     @property
     def last(self) -> "Sentence":
-        """Dernière phrase de la fenêtre. Détermine l'avancement du curseur de reprise."""
+        """Last sentence of the chunk. Determines the resume cursor's progress."""
         return self.sentences[-1]
 
     def render(self, *, with_ids: bool = True) -> str:
-        """Assemble le texte de la fenêtre pour l'injecter dans le prompt.
+        """Assembles the chunk's text for injection into the prompt.
 
         Args:
-            with_ids: préfixe chaque ligne de son identifiant de phrase, ce qui permet au
-                modèle de citer des repères vérifiables.
+            with_ids: prefixes each line with its sentence identifier, which lets the
+                model cite verifiable references.
         """
         if with_ids:
             return "\n".join(f"[{sentence.id}] {sentence.text}" for sentence in self.sentences)
@@ -62,31 +62,31 @@ def iter_chunks(
     overlap: int,
     start_chunk_index: int = 0,
 ) -> Iterator[Chunk]:
-    """Découpe un flux de phrases en fenêtres glissantes.
+    """Splits a stream of sentences into sliding chunks.
 
     Args:
-        sentences: flux de phrases, consommé paresseusement.
-        size: nombre de phrases par fenêtre.
-        overlap: nombre de phrases répétées d'une fenêtre à la suivante. Doit être
-            strictement inférieur à `size`, sinon la fenêtre n'avance pas.
-        start_chunk_index: décalage appliqué à `Chunk.index`, pour numéroter correctement
-            les fenêtres lors d'une reprise en cours de fichier.
+        sentences: stream of sentences, consumed lazily.
+        size: number of sentences per chunk.
+        overlap: number of sentences repeated from one chunk to the next. Must be
+            strictly less than `size`, otherwise the chunk does not advance.
+        start_chunk_index: offset applied to `Chunk.index`, to number chunks correctly
+            when resuming partway through a file.
 
     Yields:
-        Les fenêtres successives. La dernière peut compter moins de `size` phrases.
+        The successive chunks. The last one may hold fewer than `size` sentences.
 
     Raises:
-        ValueError: `size` non strictement positif, ou `overlap` hors de ``[0, size)``.
+        ValueError: `size` not strictly positive, or `overlap` outside ``[0, size)``.
     """
     raise NotImplementedError
 
 
 def chunk_count(sentence_count: int, *, size: int, overlap: int) -> int:
-    """Nombre de fenêtres que produirait un fichier de `sentence_count` phrases.
+    """Number of chunks a file of `sentence_count` sentences would produce.
 
-    Sert à afficher une progression avant d'avoir lu le fichier.
+    Used to display progress before the file has been read.
 
     Raises:
-        ValueError: paramètres de fenêtrage invalides.
+        ValueError: invalid chunking parameters.
     """
     raise NotImplementedError

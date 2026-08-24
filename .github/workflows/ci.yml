@@ -36,7 +36,7 @@ jobs:
       - name: ruff (format)
         run: uv run ruff format --check .
 
-      - name: mypy (très strict)
+      - name: mypy (strict)
         run: uv run mypy
 
       - name: pytest

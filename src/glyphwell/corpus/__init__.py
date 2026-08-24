@@ -1,4 +1,4 @@
-"""Acquisition, parcours et découpage du corpus de sous-titres."""
+"""Acquisition, traversal, and chunking of the subtitle corpus."""
 
 from glyphwell.corpus.archive import ArchiveMember, ArchiveSummary, CorpusArchive
 from glyphwell.corpus.chunker import Chunk, chunk_count, iter_chunks

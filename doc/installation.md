@@ -1,43 +1,43 @@
 # Installation
 
-## Prérequis
+## Prerequisites
 
-- **Python 3.12** ou plus récent.
-- **[`uv`](https://docs.astral.sh/uv/)** — tout passe par lui. N'installez jamais de paquet
-  avec `pip` dans `.venv` : `uv.lock` et l'environnement divergeraient silencieusement.
-- **Ollama** — seulement pour l'étape de recherche, pas pour récupérer le corpus.
+- **Python 3.12** or more recent.
+- **[`uv`](https://docs.astral.sh/uv/)** — everything goes through it. Never install a
+  package with `pip` into `.venv`: `uv.lock` and the environment would silently drift apart.
+- **Ollama** — only for the search step, not for fetching the corpus.
 
-## Mise en place
+## Setup
 
 ```bash
-pip install uv          # une fois, si uv n'est pas déjà présent
-git clone <dépôt> glyphwell && cd glyphwell
-uv sync --all-extras    # crée le venv, résout et installe tout
+pip install uv          # once, if uv isn't already present
+git clone <repository> glyphwell && cd glyphwell
+uv sync --all-extras    # creates the venv, resolves and installs everything
 uv run glyphwell --help
 ```
 
-`uv sync` crée `.venv/` et installe le projet en mode éditable. Toutes les commandes du
-projet s'invoquent ensuite par `uv run glyphwell …`.
+`uv sync` creates `.venv/` and installs the project in editable mode. All project
+commands are then invoked via `uv run glyphwell …`.
 
-## Espace disque
+## Disk space
 
-C'est le seul point de dimensionnement réel du projet.
+This is the only real sizing consideration in the project.
 
-| Élément | Taille |
+| Item | Size |
 |---|---|
-| Archive OpenSubtitles `en` / `raw`, release `v2024` | 35,8 Go |
-| Base SQLite après indexation | quelques centaines de Mo |
-| Datasets IMDb (`.tsv.gz` + import) | ~1 Go |
+| OpenSubtitles archive `en` / `raw`, release `v2024` | 35.8 GB |
+| SQLite database after indexing | a few hundred MB |
+| IMDb datasets (`.tsv.gz` + import) | ~1 GB |
 
-L'archive **n'est pas décompressée** : prévoir sa taille, pas son double. Voir
-[corpus.md](corpus.md#pourquoi-larchive-nest-jamais-décompressée).
+The archive **is not extracted**: plan for its size, not double. See
+[corpus.md](corpus.md#why-the-archive-is-never-extracted).
 
-Le répertoire de travail se choisit par `GLYPHWELL_DATA_DIR` — copiez `.env.example` en
-`.env` et ajustez-le, ou passez `--data-dir` à chaque commande. Tout ce qu'il contient est
-reconstructible : il est ignoré par git et peut être supprimé sans rien perdre d'autre que
-du temps de téléchargement.
+The working directory is chosen via `GLYPHWELL_DATA_DIR` — copy `.env.example` to
+`.env` and adjust it, or pass `--data-dir` to each command. Everything it contains is
+reconstructible: it is ignored by git and can be deleted without losing anything but
+download time.
 
-## Vérifier l'installation
+## Verifying the installation
 
 ```bash
 uv run glyphwell --version
@@ -45,14 +45,14 @@ uv run glyphwell db init
 uv run glyphwell db status
 ```
 
-Pour valider toute la chaîne d'acquisition sans engager des dizaines de Go, utilisez un
-petit corpus OPUS — quelques secondes suffisent :
+To validate the whole acquisition chain without committing to tens of gigabytes, use a
+small OPUS corpus — a few seconds is enough:
 
 ```bash
 uv run glyphwell corpus fetch --corpus Books --language en --version latest
 ```
 
-## Développement
+## Development
 
 ```bash
 uv run pytest -q
@@ -61,5 +61,5 @@ uv run mypy
 uv run pre-commit install
 ```
 
-Le projet est typé de bout en bout, vérifié par mypy en mode très strict. Les conventions
-et les décisions de conception sont consignées dans [CLAUDE.md](../CLAUDE.md).
+The project is typed end to end, checked by mypy in very strict mode. Conventions
+and design decisions are recorded in [CLAUDE.md](../CLAUDE.md).

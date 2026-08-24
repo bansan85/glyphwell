@@ -1,51 +1,50 @@
-# Documentation glyphwell
+# glyphwell documentation
 
-`glyphwell` cherche dans l'intégralité des sous-titres OpenSubtitles à l'aide d'un LLM
-exécuté localement par Ollama.
+`glyphwell` searches the entirety of the OpenSubtitles subtitles using an LLM run
+locally by Ollama.
 
-## Sommaire
+## Contents
 
-| Document | Contenu |
+| Document | Contents |
 |---|---|
-| [installation.md](installation.md) | Installer `uv`, l'environnement, et dimensionner le disque. |
-| [configuration.md](configuration.md) | Variables `GLYPHWELL_*`, arborescence de `data/`. |
-| [corpus.md](corpus.md) | **Étape 1** : récupérer l'archive OpenSubtitles et la lire. |
+| [installation.md](installation.md) | Install `uv`, the environment, and size the disk. |
+| [configuration.md](configuration.md) | `GLYPHWELL_*` variables, `data/` layout. |
+| [corpus.md](corpus.md) | **Step 1**: fetch the OpenSubtitles archive and read it. |
 
-## Le pipeline en quatre étapes
+## The four-step pipeline
 
-1. **Télécharger le corpus.** L'archive OPUS *OpenSubtitles* (langue `en`, format `raw`)
-   est déposée telle quelle sur le disque. Elle n'est jamais décompressée : les
-   sous-titres en sont lus à la volée. → [corpus.md](corpus.md)
-2. **Résoudre les titres.** Les sous-titres sont classés par identifiant IMDb ; les
-   datasets IMDb officiels se joignent directement dessus et donnent le titre, le type
-   (film / série / épisode), l'année et le rattachement épisode → série. Hors-ligne, sans
-   clé API.
-3. **Chercher.** Un manifeste YAML décrit le prompt, le modèle Ollama, les filtres de
-   sélection et le schéma de sortie attendu. Chaque sous-titre est découpé en fenêtres
-   glissantes de N phrases ; chaque fenêtre donne un appel au modèle.
-4. **Reprendre.** L'état est persisté en SQLite au grain de la fenêtre : une recherche
-   interrompue reprend à la ligne en cours, pas au début du fichier.
+1. **Download the corpus.** The OPUS *OpenSubtitles* archive (language `en`, format `raw`)
+   is dropped onto disk as-is. It is never extracted: subtitles are read from it on the
+   fly. → [corpus.md](corpus.md)
+2. **Resolve titles.** Subtitles are classified by IMDb identifier; the official IMDb
+   datasets join directly on it and give the title, the type (movie / series / episode),
+   the year, and the episode → series relationship. Offline, no API key.
+3. **Search.** A YAML manifest describes the prompt, the Ollama model, the selection
+   filters, and the expected output schema. Each subtitle is split into sliding chunks
+   of N sentences; each chunk yields one call to the model.
+4. **Resume.** State is persisted in SQLite at chunk granularity: an interrupted search
+   resumes at the current line, not at the start of the file.
 
-## État d'avancement
+## Progress status
 
-Seule l'étape 1 est opérationnelle à ce jour.
+Only step 1 is operational so far.
 
-| Capacité | État |
+| Capability | Status |
 |---|---|
-| `glyphwell db init` / `status` / `vacuum` | opérationnel |
-| `glyphwell corpus fetch` | **opérationnel** |
-| `glyphwell corpus index` / `refresh` | à implémenter |
-| `glyphwell metadata fetch-imdb` / `import-imdb` | à implémenter |
-| `glyphwell search run` / `resume` / `status` / `export` | à implémenter |
+| `glyphwell db init` / `status` / `vacuum` | operational |
+| `glyphwell corpus fetch` | **operational** |
+| `glyphwell corpus index` / `refresh` | to implement |
+| `glyphwell metadata fetch-imdb` / `import-imdb` | to implement |
+| `glyphwell search run` / `resume` / `status` / `export` | to implement |
 
-Les commandes non implémentées sont câblées dans la CLI et exposent déjà leur aide : leur
-signature est arrêtée, seul le traitement manque.
+Commands not yet implemented are wired into the CLI and already expose their help: their
+signature is settled, only the processing is missing.
 
-## Deux principes qui traversent le projet
+## Two principles that run through the project
 
-**Rien n'est décompressé.** L'archive du corpus reste un fichier zip unique. Cela économise
-une quarantaine de Go et des centaines de milliers de fichiers, et donne un artefact
-vérifiable par une seule empreinte.
+**Nothing is extracted.** The corpus archive stays a single zip file. This saves about
+forty gigabytes and hundreds of thousands of files, and yields an artifact that can be
+verified with a single checksum.
 
-**Rien n'est perdu à l'interruption.** Le téléchargement reprend où il s'est arrêté ; la
-recherche reprendra au milieu d'un sous-titre. Un `Ctrl-C` n'est jamais coûteux.
+**Nothing is lost on interruption.** The download resumes where it left off; search will
+resume in the middle of a subtitle. A `Ctrl-C` is never costly.

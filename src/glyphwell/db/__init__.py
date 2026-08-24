@@ -1,4 +1,4 @@
-"""Persistance SQLite : connexion, schéma versionné et accès typé aux tables."""
+"""SQLite persistence: connection, versioned schema, and typed access to tables."""
 
 from glyphwell.db.connection import connect, open_connection
 from glyphwell.db.migrations import (

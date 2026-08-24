@@ -1,6 +1,6 @@
-"""Sous-commandes ``glyphwell metadata``.
+"""Subcommands ``glyphwell metadata``.
 
-STATUT : commandes câblées, traitements en attente d'implémentation.
+STATUS: commands wired up, processing pending implementation.
 """
 
 from typing import Annotated
@@ -12,7 +12,7 @@ from glyphwell.cli.context import get_context
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Téléchargement et import des métadonnées de titres depuis les datasets IMDb.",
+    help="Download and import of title metadata from the IMDb datasets.",
     no_args_is_help=True,
 )
 
@@ -22,12 +22,12 @@ def fetch_imdb(
     ctx: typer.Context,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Re-télécharge même si les fichiers sont présents."),
+        typer.Option("--force", help="Re-downloads even if the files are already present."),
     ] = False,
 ) -> None:
-    """Télécharge `title.basics.tsv.gz` et `title.episode.tsv.gz`.
+    """Downloads `title.basics.tsv.gz` and `title.episode.tsv.gz`.
 
-    Datasets non commerciaux IMDb : aucune clé API, republiés chaque jour.
+    IMDb non-commercial datasets: no API key, republished daily.
     """
     settings = get_context(ctx).settings
     _ = (settings, force)
@@ -36,10 +36,10 @@ def fetch_imdb(
 
 @app.command("import-imdb")
 def import_imdb(ctx: typer.Context) -> None:
-    """Importe les datasets IMDb dans la table `titles`.
+    """Imports the IMDb datasets into the `titles` table.
 
-    Les épisodes sont traités après les titres de base, afin que leur rattachement à la
-    série parente trouve une ligne existante.
+    Episodes are processed after base titles, so that their attachment to the
+    parent series finds an existing row.
     """
     settings = get_context(ctx).settings
     _ = settings

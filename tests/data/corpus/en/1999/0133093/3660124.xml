@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Échantillon entièrement fabriqué, imitant la structure des fichiers OPUS
-     OpenSubtitles au format `raw` : phrases <s> numérotées, repères temporels <time>.
-     Le chemin reproduit l'arborescence attendue : en/1999/0133093/3660124.xml -->
+<!-- Entirely fabricated sample, imitating the structure of OPUS OpenSubtitles files in
+     `raw` format: numbered <s> sentences, <time> markers.
+     The path reproduces the expected tree layout: en/1999/0133093/3660124.xml -->
 <document id="3660124">
   <s id="1">
     <time id="T1S" value="00:00:314" />

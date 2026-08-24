@@ -1,4 +1,4 @@
-"""Recherche pilotée par LLM sur le corpus de sous-titres OpenSubtitles."""
+"""LLM-driven search over the OpenSubtitles subtitle corpus."""
 
 __all__ = ["__version__"]
 

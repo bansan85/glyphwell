@@ -1,8 +1,8 @@
-"""La CLI est entièrement câblée : chaque groupe et chaque commande expose son aide.
+"""The CLI is fully wired up: every group and every command exposes its help.
 
-Test volontairement superficiel : à ce stade la plupart des traitements sont des stubs, mais
-l'arborescence des commandes, les options et les valeurs par défaut doivent déjà être
-correctes — c'est ce qui casse le plus discrètement quand on ajoute une sous-commande.
+Deliberately shallow test: at this stage most of the processing is stubbed, but
+the command tree, options and default values must already be correct — that is
+what breaks most quietly when a subcommand is added.
 """
 
 from pathlib import Path
@@ -59,7 +59,7 @@ def test_command_help(group: str, command: str) -> None:
 
 
 def test_db_init_then_status(tmp_path: Path) -> None:
-    """Le seul bout de chaîne complet à ce stade : créer une base, puis l'inspecter."""
+    """The only fully complete chain at this stage: create a database, then inspect it."""
     data_dir = tmp_path / "data"
 
     created = runner.invoke(app, ["--data-dir", str(data_dir), "db", "init"])
@@ -72,6 +72,6 @@ def test_db_init_then_status(tmp_path: Path) -> None:
 
 
 def test_status_without_database_fails_cleanly(tmp_path: Path) -> None:
-    """Une base absente doit produire un message actionnable, pas une trace de pile."""
-    result = runner.invoke(app, ["--data-dir", str(tmp_path / "vide"), "db", "status"])
+    """A missing database must produce an actionable message, not a stack trace."""
+    result = runner.invoke(app, ["--data-dir", str(tmp_path / "empty"), "db", "status"])
     assert result.exit_code != 0

@@ -1,7 +1,7 @@
-"""Résolution dans l'index OPUS et téléchargement de l'archive, hors réseau.
+"""Resolution in the OPUS index and archive download, without touching the network.
 
-Aucun test ne sort de la machine : `httpx.MockTransport` est injecté par le paramètre
-`client`, déjà présent dans les signatures. Rien à monkeypatcher.
+No test leaves the machine: `httpx.MockTransport` is injected via the `client` parameter,
+already present in the signatures. Nothing to monkeypatch.
 """
 
 import hashlib
@@ -22,11 +22,11 @@ from glyphwell.types import JsonObject
 ARCHIVE_URL = "https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/raw/en.zip"
 ARCHIVE_NAME = "OpenSubtitles_v2018_raw_en.zip"
 PAYLOAD = bytes(range(256)) * 8
-"""2048 octets, soit exactement les 2 kilo-octets annoncés par l'index de test."""
+"""2048 bytes, exactly the 2 kilobytes announced by the test index."""
 
 
 def _record(**overrides: str | int) -> JsonObject:
-    """Un enregistrement de l'index, dans la forme rendue par l'API OPUS."""
+    """A record from the index, in the shape returned by the OPUS API."""
     record: JsonObject = {
         "corpus": "OpenSubtitles",
         "version": "v2018",
@@ -48,7 +48,7 @@ def _client(
     index_status: int = 200,
     seen: list[httpx.Request] | None = None,
 ) -> httpx.Client:
-    """Client servant l'index puis l'archive, et notant les requêtes reçues."""
+    """Client serving the index then the archive, and recording the requests received."""
     served = [_record()] if records is None else records
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -77,7 +77,7 @@ def _client(
 
 
 def test_resolve_picks_the_monolingual_record() -> None:
-    """Interroger une langue ramène aussi ses paires bilingues : il faut les écarter."""
+    """Querying a language also returns its bilingual pairs: they must be discarded."""
     with _client(records=[_record(target="fr"), _record()]) as http:
         record = resolve_archive(client=http)
 
@@ -86,10 +86,12 @@ def test_resolve_picks_the_monolingual_record() -> None:
 
 
 def test_other_languages_monolingual_archives_are_ignored() -> None:
-    """En préprocessing ``raw``, l'index rend l'archive mono de *chaque* langue appariée.
+    """In ``raw`` preprocessing, the index returns the monolingual archive of *every*
+    language paired with ours.
 
-    Sans test sur `source`, une requête ``en`` remonte une cinquantaine de candidats et le
-    premier venu — ``eo``, ``es``... — serait téléchargé à la place du bon.
+    Without a check on `source`, an ``en`` request surfaces some fifty candidates and
+    whichever comes first — ``eo``, ``es``... — would be downloaded instead of the right
+    one.
     """
     records = [
         _record(source="eo", url="https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2018/raw/eo.zip"),
@@ -104,7 +106,7 @@ def test_other_languages_monolingual_archives_are_ignored() -> None:
 
 
 def test_missing_record_lists_what_the_index_offers() -> None:
-    """L'erreur doit dire quoi corriger : version ou langue."""
+    """The error must say what to fix: version or language."""
     with (
         _client(records=[_record(version="v2024", target="fr")]) as http,
         pytest.raises(CorpusError, match="v2024"),
@@ -113,12 +115,12 @@ def test_missing_record_lists_what_the_index_offers() -> None:
 
 
 def test_empty_index_is_reported() -> None:
-    with _client(records=[]) as http, pytest.raises(CorpusError, match="aucun enregistrement"):
+    with _client(records=[]) as http, pytest.raises(CorpusError, match="no records"):
         resolve_archive(client=http)
 
 
 def test_unreachable_index_is_reported() -> None:
-    with _client(index_status=503) as http, pytest.raises(MetadataError, match="injoignable"):
+    with _client(index_status=503) as http, pytest.raises(MetadataError, match="unreachable"):
         resolve_archive(client=http)
 
 
@@ -129,9 +131,10 @@ def test_versions_are_listed_newest_first() -> None:
 
 
 def test_versions_query_omits_the_version_parameter() -> None:
-    """Un ``version=`` vide fait rendre zéro résultat à l'index : il faut l'omettre.
+    """An empty ``version=`` makes the index return zero results: it must be omitted.
 
-    Le code d'`opustools` suggère qu'une espace sert de joker ; l'API en ligne, non.
+    `opustools`'s code suggests that a single space acts as a wildcard; the online API
+    disagrees.
     """
     seen: list[httpx.Request] = []
     with _client(records=[_record()], seen=seen) as http:
@@ -141,7 +144,7 @@ def test_versions_query_omits_the_version_parameter() -> None:
 
 
 def test_version_key_orders_numerically() -> None:
-    """Un tri lexicographique classerait ``v9`` après ``v2018``."""
+    """A lexicographic sort would rank ``v9`` after ``v2018``."""
     assert _version_key("v9") < _version_key("v2018")
     assert _version_key("latest") == ()
 
@@ -164,7 +167,7 @@ def test_download_writes_archive_and_hashes_it(tmp_path: Path) -> None:
 
 
 def test_no_part_file_survives_a_complete_download(tmp_path: Path) -> None:
-    """Un ``.part`` résiduel ferait croire à une reprise possible sur un fichier complet."""
+    """A leftover ``.part`` would suggest a resume is possible on a complete file."""
     with _client() as http:
         download_corpus(dest_dir=tmp_path, client=http)
 
@@ -172,7 +175,7 @@ def test_no_part_file_survives_a_complete_download(tmp_path: Path) -> None:
 
 
 def test_download_resumes_from_an_interrupted_part(tmp_path: Path) -> None:
-    """Le cœur du choix de `httpx` : ne pas retélécharger 30 Go après une coupure."""
+    """The core reason for choosing `httpx`: not re-downloading 30 GB after a cutoff."""
     part = tmp_path / f"{ARCHIVE_NAME}.part"
     part.write_bytes(PAYLOAD[:512])
     seen: list[httpx.Request] = []
@@ -183,12 +186,12 @@ def test_download_resumes_from_an_interrupted_part(tmp_path: Path) -> None:
     ranges = [request.headers["Range"] for request in seen if "Range" in request.headers]
     assert ranges == ["bytes=512-"]
     assert result.archive_path.read_bytes() == PAYLOAD
-    # Les octets déjà présents n'ont pas traversé le hachage : pas d'empreinte inventée.
+    # The bytes already present never went through hashing: no checksum is invented.
     assert result.sha256 is None
 
 
 def test_resume_reports_progress_from_the_existing_offset(tmp_path: Path) -> None:
-    """Une barre repartant de zéro mentirait sur ce qui reste à faire."""
+    """A progress bar restarting from zero would lie about what remains to be done."""
     (tmp_path / f"{ARCHIVE_NAME}.part").write_bytes(PAYLOAD[:512])
     seen: list[tuple[int, int | None]] = []
 
@@ -218,7 +221,7 @@ def test_existing_archive_is_left_alone(tmp_path: Path) -> None:
 
 def test_force_downloads_again(tmp_path: Path) -> None:
     archive = tmp_path / ARCHIVE_NAME
-    archive.write_bytes(b"archive perimee")
+    archive.write_bytes(b"stale archive")
 
     with _client() as http:
         result = download_corpus(dest_dir=tmp_path, force=True, client=http)
@@ -228,8 +231,8 @@ def test_force_downloads_again(tmp_path: Path) -> None:
 
 
 def test_force_ignores_a_stale_part(tmp_path: Path) -> None:
-    """`--force` sert à repartir de zéro : reprendre un ``.part`` douteux irait contre."""
-    (tmp_path / f"{ARCHIVE_NAME}.part").write_bytes(b"debut douteux")
+    """`--force` exists to start over: resuming a dubious ``.part`` would defeat that."""
+    (tmp_path / f"{ARCHIVE_NAME}.part").write_bytes(b"dubious start")
     seen: list[httpx.Request] = []
 
     with _client(seen=seen) as http:

@@ -1,13 +1,13 @@
-"""Console Rich unique du projet.
+"""The project's single Rich console.
 
-Rich ne coordonne un affichage vivant (`Progress`, `Live`) avec les écritures ordinaires
-que si les deux passent par la **même** `Console` : chacune tient sa propre position de
-curseur. Deux instances distinctes — celle d'une barre de progression et celle du
-`RichHandler` de la journalisation — se disputent le terminal, et la moindre ligne de
-journal émise pendant un téléchargement vient hacher la barre.
+Rich only coordinates a live display (`Progress`, `Live`) with ordinary writes if both
+go through the **same** `Console`: each one tracks its own cursor position. Two separate
+instances — one for a progress bar, one for logging's `RichHandler` — would fight over
+the terminal, and the slightest log line emitted during a download would slice through
+the bar.
 
-D'où cette instance unique, partagée par les sous-commandes et par la journalisation.
-Ne pas construire de `Console()` ailleurs.
+Hence this single instance, shared by subcommands and by logging.
+Do not construct a `Console()` anywhere else.
 """
 
 from typing import Final

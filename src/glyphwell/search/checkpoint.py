@@ -1,18 +1,18 @@
-"""Curseur de reprise.
+"""Resume cursor.
 
-Module le plus critique du projet : c'est ici que la promesse « reprendre à la ligne en
-cours » se traduit en écritures SQLite.
+The project's most critical module: this is where the promise of "resuming at the
+current line" translates into SQLite writes.
 
-Deux invariants gouvernent tout le module :
+Two invariants govern the whole module:
 
-1. **Une transaction par fenêtre.** `commit_chunk` écrit le résultat *et* l'avancement du
-   curseur dans la même transaction. Un crash ne peut donc ni perdre un résultat déjà
-   produit, ni faire avancer le curseur au-delà de ce qui a été enregistré.
-2. **Idempotence.** L'insertion du résultat est un ``INSERT OR IGNORE`` sur
-   ``UNIQUE(run_id, file_id, chunk_index)`` : rejouer une fenêtre après une interruption ne
-   crée pas de doublon. Le doublon est le cas normal, pas une erreur.
+1. **One transaction per chunk.** `commit_chunk` writes the result *and* the cursor's
+   progress in the same transaction. A crash can therefore neither lose a result already
+   produced, nor advance the cursor beyond what has been recorded.
+2. **Idempotence.** Inserting the result is an ``INSERT OR IGNORE`` on
+   ``UNIQUE(run_id, file_id, chunk_index)``: replaying a chunk after an interruption does
+   not create a duplicate. The duplicate is the normal case, not an error.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 import sqlite3
@@ -29,15 +29,15 @@ __all__ = ["Checkpoint", "commit_chunk", "load_checkpoint", "resume_position"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Checkpoint:
-    """Où en est un fichier dans une recherche.
+    """Where a file stands in a search.
 
     Attributes:
-        run_id: recherche concernée.
-        file_id: fichier concerné.
-        last_sentence_index: position de la dernière phrase traitée, ou `None` si le fichier
-            n'a pas encore été entamé. **Fait autorité** pour la reprise.
-        last_sentence_id: attribut ``<s id>`` correspondant, informatif.
-        chunks_done: nombre de fenêtres déjà committées, qui donne le prochain
+        run_id: search concerned.
+        file_id: file concerned.
+        last_sentence_index: position of the last sentence processed, or `None` if the
+            file has not been started yet. **Authoritative** for resuming.
+        last_sentence_id: corresponding ``<s id>`` attribute, informational.
+        chunks_done: number of chunks already committed, which gives the next
             `Chunk.index`.
     """
 
@@ -49,28 +49,28 @@ class Checkpoint:
 
     @property
     def started(self) -> bool:
-        """Vrai si au moins une fenêtre a été committée pour ce fichier."""
+        """True if at least one chunk has been committed for this file."""
         return self.last_sentence_index is not None
 
 
 def load_checkpoint(conn: sqlite3.Connection, *, run_id: int, file_id: int) -> Checkpoint | None:
-    """Lit le curseur d'un fichier, ou `None` s'il n'est pas dans la file de cette recherche."""
+    """Reads a file's cursor, or `None` if it is not in this search's queue."""
     raise NotImplementedError
 
 
 def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -> tuple[int, int]:
-    """Calcule où reprendre la lecture d'un fichier.
+    """Computes where to resume reading a file.
 
     Args:
-        checkpoint: curseur courant, ou `None` pour un fichier neuf.
-        size: taille de fenêtre du manifeste.
-        overlap: recouvrement du manifeste.
+        checkpoint: current cursor, or `None` for a fresh file.
+        size: manifest chunk size.
+        overlap: manifest overlap.
 
     Returns:
-        Le couple ``(start_index, start_chunk_index)`` : première phrase à émettre, et
-        numéro à donner à la première fenêtre produite. Les deux valeurs doivent rester
-        cohérentes, sinon `chunk_index` cesserait de désigner la même plage de phrases
-        qu'au premier passage et la contrainte d'unicité perdrait son sens.
+        The pair ``(start_index, start_chunk_index)``: first sentence to emit, and the
+        number to give the first chunk produced. The two values must stay consistent,
+        otherwise `chunk_index` would stop designating the same sentence range as on the
+        first pass and the uniqueness constraint would lose its meaning.
     """
     raise NotImplementedError
 
@@ -86,15 +86,15 @@ def commit_chunk(
     model: str,
     latency_ms: int | None,
 ) -> bool:
-    """Enregistre le résultat d'une fenêtre et avance le curseur, en une transaction.
+    """Records a chunk's result and advances the cursor, in one transaction.
 
     Returns:
-        Vrai si un résultat a été inséré, faux si la fenêtre était déjà enregistrée — ce qui
-        arrive normalement lors d'une reprise et n'est pas une erreur. Dans les deux cas le
-        curseur est avancé.
+        True if a result was inserted, false if the chunk was already recorded — which
+        normally happens on resume and is not an error. In both cases the cursor is
+        advanced.
 
     Raises:
-        DatabaseError: échec d'écriture. La transaction est alors annulée : le curseur reste
-            sur la dernière fenêtre réellement enregistrée.
+        DatabaseError: write failed. The transaction is then rolled back: the cursor stays
+            at the last chunk actually recorded.
     """
     raise NotImplementedError

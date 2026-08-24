@@ -1,7 +1,7 @@
-"""Configuration du projet.
+"""Project configuration.
 
-Toutes les valeurs sont surchargeables par variable d'environnement préfixée
-``GLYPHWELL_`` ou par un fichier ``.env`` à la racine (voir ``.env.example``).
+All values can be overridden via an environment variable prefixed with
+``GLYPHWELL_`` or via a ``.env`` file at the root (see ``.env.example``).
 """
 
 from pathlib import Path
@@ -12,15 +12,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["LogLevel", "Settings"]
 
-# Alias implicite, et non `type LogLevel = ...` (PEP 695) : Typer introspecte l'annotation à
-# l'exécution et ne sait pas déballer un `TypeAliasType`, ce qui ferait échouer la
-# construction de l'option `--log-level`. Ailleurs dans le projet, les alias PEP 695 sont la
-# règle (cf. glyphwell.types).
+# Implicit alias, not `type LogLevel = ...` (PEP 695): Typer introspects the annotation at
+# runtime and can't unwrap a `TypeAliasType`, which would break the construction of the
+# `--log-level` option. Elsewhere in the project, PEP 695 aliases are the rule (see
+# glyphwell.types).
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
 class Settings(BaseSettings):
-    """Paramètres d'exécution résolus une fois au démarrage de la CLI."""
+    """Runtime settings resolved once at CLI startup."""
 
     model_config = SettingsConfigDict(
         env_prefix="GLYPHWELL_",
@@ -32,13 +32,13 @@ class Settings(BaseSettings):
     data_dir: Path = Field(
         default=Path("data"),
         description=(
-            "Racine de toutes les données produites. Le corpus anglais complet pèse "
-            "plusieurs dizaines de Go décompressés."
+            "Root of all produced data. The full English corpus weighs several dozen "
+            "GB uncompressed."
         ),
     )
     database: Path | None = Field(
         default=None,
-        description="Chemin de la base SQLite. Par défaut : <data_dir>/glyphwell.db.",
+        description="Path to the SQLite database. Defaults to <data_dir>/glyphwell.db.",
     )
 
     ollama_host: str = Field(default="http://localhost:11434")
@@ -48,13 +48,13 @@ class Settings(BaseSettings):
         default=4,
         ge=1,
         le=64,
-        description="Nombre de fenêtres analysées en parallèle par une recherche.",
+        description="Number of chunks analyzed in parallel by a search.",
     )
 
     opus_corpus: str = Field(default="OpenSubtitles")
     opus_version: str = Field(
         default="v2024",
-        description="Release OPUS. La plus récente, donc la plus complète : 35,8 Go en `en`.",
+        description="OPUS release. The most recent, hence the most complete: 35.8 GB in `en`.",
     )
     opus_language: str = Field(default="en")
 
@@ -62,30 +62,30 @@ class Settings(BaseSettings):
 
     @property
     def database_path(self) -> Path:
-        """Chemin effectif de la base SQLite."""
+        """Effective path to the SQLite database."""
         return self.database if self.database is not None else self.data_dir / "glyphwell.db"
 
     @property
     def corpus_dir(self) -> Path:
-        """Répertoire du corpus : c'est là que vit l'archive OPUS.
+        """Corpus directory: this is where the OPUS archive lives.
 
-        L'archive n'est jamais décompressée (cf. `glyphwell.corpus.archive`) : ce
-        répertoire contient un fichier zip par couple (release, langue), pas une
-        arborescence de sous-titres.
+        The archive is never decompressed (see `glyphwell.corpus.archive`): this
+        directory contains one zip file per (release, language) pair, not a
+        subtitle layout.
         """
         return self.data_dir / "corpus"
 
     @property
     def downloads_dir(self) -> Path:
-        """TSV des datasets IMDb. L'archive OPUS, elle, vit dans `corpus_dir`."""
+        """IMDb dataset TSVs. The OPUS archive, meanwhile, lives in `corpus_dir`."""
         return self.data_dir / "downloads"
 
     @property
     def exports_dir(self) -> Path:
-        """Résultats exportés par ``glyphwell search export``."""
+        """Results exported by ``glyphwell search export``."""
         return self.data_dir / "exports"
 
     def ensure_directories(self) -> None:
-        """Crée les répertoires de travail s'ils n'existent pas."""
+        """Creates the working directories if they don't exist."""
         for directory in (self.data_dir, self.corpus_dir, self.downloads_dir, self.exports_dir):
             directory.mkdir(parents=True, exist_ok=True)

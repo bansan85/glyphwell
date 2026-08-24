@@ -1,9 +1,9 @@
-"""Accès au serveur Ollama.
+"""Access to the Ollama server.
 
-L'appel est exposé derrière un `Protocol` : le moteur de recherche ne dépend pas d'Ollama,
-et les tests injectent un client déterministe sans faire tourner de modèle.
+The call is exposed behind a `Protocol`: the search engine does not depend on Ollama,
+and tests inject a deterministic client without running a model.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, apart from the value object.
 """
 
 from dataclasses import dataclass
@@ -19,14 +19,14 @@ __all__ = ["Completion", "LlmClient", "OllamaClient"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Completion:
-    """Réponse du modèle pour une fenêtre.
+    """Model response for a chunk.
 
     Attributes:
-        text: réponse brute, conservée telle quelle pour le diagnostic.
-        payload: réponse décodée et validée contre le schéma du manifeste, ou `None` en
-            sortie texte.
-        model: modèle ayant réellement répondu, tel que rapporté par le serveur.
-        latency_ms: durée de l'appel, utile pour estimer le reste d'une recherche.
+        text: raw response, kept as-is for diagnostics.
+        payload: response decoded and validated against the manifest's schema, or `None`
+            for text output.
+        model: model that actually answered, as reported by the server.
+        latency_ms: call duration, useful to estimate the remainder of a search.
     """
 
     text: str
@@ -36,7 +36,7 @@ class Completion:
 
 
 class LlmClient(Protocol):
-    """Contrat minimal attendu par le moteur de recherche."""
+    """Minimal contract expected by the search engine."""
 
     def complete(
         self,
@@ -47,17 +47,17 @@ class LlmClient(Protocol):
         options: "Mapping[str, JsonValue] | None" = None,
         json_schema: "Mapping[str, JsonValue] | None" = None,
     ) -> Completion:
-        """Soumet une fenêtre au modèle et renvoie sa réponse."""
+        """Submits a chunk to the model and returns its response."""
         ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OllamaClient:
-    """`LlmClient` adossé au serveur Ollama.
+    """`LlmClient` backed by the Ollama server.
 
-    `json_schema` est transmis au serveur pour contraindre la génération, puis la réponse
-    est **revérifiée côté client** : la contrainte réduit les écarts, elle ne les élimine
-    pas.
+    `json_schema` is passed to the server to constrain generation, then the response is
+    **re-checked client-side**: the constraint reduces deviations, it does not eliminate
+    them.
     """
 
     host: str = "http://localhost:11434"
@@ -73,20 +73,20 @@ class OllamaClient:
         options: "Mapping[str, JsonValue] | None" = None,
         json_schema: "Mapping[str, JsonValue] | None" = None,
     ) -> Completion:
-        """Voir `LlmClient.complete`.
+        """See `LlmClient.complete`.
 
         Raises:
-            OllamaError: serveur injoignable, modèle absent, ou échec après `max_retries`.
-            ModelOutputError: réponse non conforme au schéma demandé.
+            OllamaError: server unreachable, model missing, or failure after `max_retries`.
+            ModelOutputError: response does not conform to the requested schema.
         """
         raise NotImplementedError
 
     def ensure_model(self, model: str) -> None:
-        """Vérifie que le modèle est disponible localement avant de lancer une recherche.
+        """Checks that the model is available locally before starting a search.
 
-        Échouer ici évite de découvrir l'absence du modèle après avoir parcouru le corpus.
+        Failing here avoids discovering the model is missing after scanning the corpus.
 
         Raises:
-            OllamaError: serveur injoignable ou modèle introuvable.
+            OllamaError: server unreachable or model not found.
         """
         raise NotImplementedError

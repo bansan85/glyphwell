@@ -1,4 +1,4 @@
-"""Journalisation : le handler doit partager la console du projet."""
+"""Logging: the handler must share the project's console."""
 
 import logging
 
@@ -8,12 +8,12 @@ from glyphwell.console import console
 from glyphwell.logging import get_logger, setup_logging
 
 
-def test_le_handler_ecrit_sur_la_console_partagee() -> None:
-    """Régression : un `RichHandler` à lui rendait la barre de progression illisible.
+def test_handler_writes_to_shared_console() -> None:
+    """Regression: a `RichHandler` of its own made the progress bar unreadable.
 
-    `RichHandler()` sans argument prend la console globale de Rich, distincte de celle
-    des sous-commandes. Les deux tiennent alors leur propre position de curseur, et une
-    ligne de journal émise pendant un `Progress` vient s'écrire par-dessus la barre.
+    `RichHandler()` without arguments takes Rich's global console, distinct from the
+    one used by subcommands. Both then track their own cursor position, and a log line
+    emitted during a `Progress` ends up writing over the bar.
     """
     setup_logging("INFO")
 
@@ -24,7 +24,7 @@ def test_le_handler_ecrit_sur_la_console_partagee() -> None:
     assert handler.console is console
 
 
-def test_setup_logging_est_idempotent() -> None:
+def test_setup_logging_is_idempotent() -> None:
     setup_logging("INFO")
     setup_logging("DEBUG")
 

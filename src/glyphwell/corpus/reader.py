@@ -1,13 +1,13 @@
-"""Lecture des fichiers de sous-titres OPUS au format ``raw``.
+"""Reads OPUS subtitle files in ``raw`` format.
 
-Un fichier contient une suite de balises ``<s id="...">`` portant le texte non tokenisé,
-entrecoupées de balises ``<time>`` qui donnent les repères temporels. Deux précautions :
+A file contains a sequence of ``<s id="...">`` tags carrying non-tokenized text,
+interspersed with ``<time>`` tags giving the timing references. Two precautions:
 
-* la lecture est **incrémentale** (``iterparse``) et le générateur libère les éléments au
-  fur et à mesure — un sous-titre peut compter des dizaines de milliers de phrases ;
-* les fichiers ne sont pas toujours bien formés, d'où ``lxml`` en mode ``recover``.
+* reading is **incremental** (``iterparse``) and the generator frees elements as it
+  goes — a subtitle can hold tens of thousands of sentences;
+* files are not always well-formed, hence ``lxml`` in ``recover`` mode.
 
-STATUT : stubs, hors objet valeur.
+STATUS: stubs, except for the value object.
 """
 
 from collections.abc import Iterator
@@ -21,16 +21,16 @@ __all__ = ["Sentence", "count_sentences", "iter_sentences"]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Sentence:
-    """Une phrase du sous-titre.
+    """A sentence of the subtitle.
 
     Attributes:
-        index: position dans le flux, à partir de 0. **Fait autorité pour la reprise** :
-            contrairement à `id`, elle est toujours contiguë et comparable.
-        id: attribut ``id`` de la balise ``<s>``, conservé pour la traçabilité. Opaque :
-            ordonné, mais pas nécessairement contigu ni purement numérique.
-        text: texte de la phrase, espaces normalisés.
-        start: horodatage d'entrée le plus proche (``<time value="...">``), si connu.
-        end: horodatage de sortie le plus proche, si connu.
+        index: position in the stream, starting at 0. **Authoritative for resume**:
+            unlike `id`, it is always contiguous and comparable.
+        id: ``id`` attribute of the ``<s>`` tag, kept for traceability. Opaque: ordered,
+            but not necessarily contiguous nor purely numeric.
+        text: text of the sentence, whitespace normalized.
+        start: nearest entry timestamp (``<time value="...">``), if known.
+        end: nearest exit timestamp, if known.
     """
 
     index: int
@@ -41,32 +41,32 @@ class Sentence:
 
 
 def iter_sentences(path: Path, *, start_index: int = 0) -> Iterator[Sentence]:
-    """Produit les phrases d'un fichier de sous-titre, dans l'ordre du document.
+    """Yields the sentences of a subtitle file, in document order.
 
-    `start_index` permet de reprendre un fichier sans réanalyser son début : les phrases
-    précédentes sont traversées mais pas émises. Le fichier est relu depuis le début — c'est
-    peu coûteux comparé à un appel LLM, et cela évite de dépendre d'un offset d'octets qui
-    serait invalidé par le moindre changement de contenu.
+    `start_index` allows resuming a file without reanalyzing its beginning: earlier
+    sentences are traversed but not emitted. The file is re-read from the start — that is
+    cheap compared to an LLM call, and it avoids depending on a byte offset that would be
+    invalidated by the slightest content change.
 
     Args:
-        path: fichier ``.xml`` ou ``.xml.gz`` du corpus.
-        start_index: première position à émettre.
+        path: ``.xml`` or ``.xml.gz`` file of the corpus.
+        start_index: first position to emit.
 
     Yields:
-        Les phrases à partir de `start_index`.
+        The sentences from `start_index` onward.
 
     Raises:
-        CorpusReadError: fichier illisible ou irrécupérablement mal formé.
+        CorpusReadError: unreadable or unrecoverably malformed file.
     """
     raise NotImplementedError
 
 
 def count_sentences(path: Path) -> int:
-    """Compte les phrases d'un fichier, sans conserver leur texte.
+    """Counts the sentences of a file, without keeping their text.
 
-    Sert à renseigner ``subtitle_files.sentence_count`` et à afficher une progression.
+    Used to populate ``subtitle_files.sentence_count`` and to display progress.
 
     Raises:
-        CorpusReadError: fichier illisible.
+        CorpusReadError: unreadable file.
     """
     raise NotImplementedError

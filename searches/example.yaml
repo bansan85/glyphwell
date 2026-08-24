@@ -1,67 +1,67 @@
-# Gabarit de recherche glyphwell — à dupliquer et adapter.
+# glyphwell search template — duplicate and adapt.
 #
-# Ce fichier est de la donnée : aucun code n'en est exécuté. Il est versionnable et haché
-# (SHA-256 du texte intégral). Ce hash identifie la recherche : dès que le fichier change,
-# `glyphwell search run` crée un nouveau run plutôt que de réutiliser des résultats obtenus
-# avec un prompt différent. Un run en cours reste donc reprenable même si vous éditez ce
-# fichier entre-temps.
+# This file is data: no code is ever executed from it. It is versionable and hashed
+# (SHA-256 of the full text). This hash identifies the search: as soon as the file
+# changes, `glyphwell search run` creates a new run instead of reusing results obtained
+# with a different prompt. A run in progress therefore stays resumable even if you edit
+# this file in the meantime.
 #
-# Lancement :  uv run glyphwell search run searches/example.yaml --limit 20
+# Launch:  uv run glyphwell search run searches/example.yaml --limit 20
 
-name: exemple
+name: example
 description: >
-  Repère les scènes où un personnage cuisine ou parle de cuisine. Sert surtout à vérifier
-  la chaîne complète sur un petit échantillon avant de lancer une vraie recherche.
+  Spots scenes where a character cooks or talks about cooking. Mainly used to verify the
+  full pipeline on a small sample before launching a real search.
 
-# Modèle Ollama. Doit être disponible localement (`ollama pull llama3.1:8b`) : la commande
-# le vérifie avant de parcourir le corpus.
+# Ollama model. Must be available locally (`ollama pull llama3.1:8b`): the command
+# checks this before scanning the corpus.
 model: llama3.1:8b
 
-# Options transmises telles quelles à Ollama.
-# temperature 0 : on veut des résultats reproductibles d'un run à l'autre.
-# num_ctx doit rester supérieur à la taille de fenêtre, sinon le modèle tronque le contexte.
+# Options passed through as-is to Ollama.
+# temperature 0: reproducible results are wanted from one run to the next.
+# num_ctx must stay larger than the chunk size, otherwise the model truncates the context.
 options:
   temperature: 0
   num_ctx: 8192
 
 # --------------------------------------------------------------------------------------
-# Quels sous-titres analyser
+# Which subtitles to analyze
 # --------------------------------------------------------------------------------------
-# Les filtres portant sur le titre (type, année, contenu adulte) exigent que les datasets
-# IMDb aient été importés : `glyphwell metadata fetch-imdb && glyphwell metadata import-imdb`.
-# Sans eux, les fichiers dont l'identifiant n'est pas résolu sont écartés.
+# Filters on the title (type, year, adult content) require the IMDb datasets to have been
+# imported: `glyphwell metadata fetch-imdb && glyphwell metadata import-imdb`.
+# Without them, files whose identifier is not resolved are excluded.
 select:
   languages: [en]
-  title_types: [movie, tvEpisode] # vide = tous les types
+  title_types: [movie, tvEpisode] # empty = all types
   years:
     min: null
     max: null
   exclude_adult: true
-  imdb_ids: null # ou une liste explicite : ["tt0133093"]
+  imdb_ids: null # or an explicit list: ["tt0133093"]
 
 # --------------------------------------------------------------------------------------
-# Fenêtrage — unité d'appel au modèle ET unité de reprise
+# Chunking — unit of model calls AND unit of resuming
 # --------------------------------------------------------------------------------------
-# Un sous-titre est découpé en fenêtres de `size` phrases, avec `overlap` phrases répétées
-# d'une fenêtre à la suivante pour ne pas couper un échange en deux.
+# A subtitle is split into chunks of `size` sentences, with `overlap` sentences repeated
+# from one chunk to the next so an exchange is not cut in two.
 #
-# `size` plus grand = moins d'appels, plus de contexte, mais un grain de reprise plus
-# grossier : une interruption fait reperdre au plus une fenêtre de travail.
-# `overlap` doit rester strictement inférieur à `size`.
+# Larger `size` = fewer calls, more context, but a coarser resume grain: an interruption
+# loses at most one chunk of work.
+# `overlap` must stay strictly smaller than `size`.
 chunk:
   size: 80
   overlap: 10
 
 # --------------------------------------------------------------------------------------
-# Pré-filtre — évalué localement, avant tout appel au modèle
+# Prefilter — evaluated locally, before any call to the model
 # --------------------------------------------------------------------------------------
-# Un appel LLM coûte des ordres de grandeur de plus qu'une recherche de sous-chaîne. Sur des
-# centaines de milliers de sous-titres, c'est le principal levier sur la durée totale.
+# An LLM call costs orders of magnitude more than a substring search. Across hundreds of
+# thousands of subtitles, this is the main lever on the total duration.
 #
-# À calibrer large : le pré-filtre ne doit jamais écarter une fenêtre que le modèle aurait
-# retenue. En cas de doute, préférer `off`.
+# Calibrate broadly: the prefilter must never discard a chunk that the model would have
+# kept. When in doubt, prefer `off`.
 #
-# mode : any (au moins un motif) | all (tous) | none (aucun) | off (pas de filtrage)
+# mode: any (at least one pattern) | all (all of them) | none (none of them) | off (no filtering)
 prefilter:
   mode: any
   patterns:
@@ -75,34 +75,34 @@ prefilter:
 # --------------------------------------------------------------------------------------
 # Prompt
 # --------------------------------------------------------------------------------------
-# Substitutions disponibles :
-#   {{ title }}     libellé du titre résolu, ou l'identifiant IMDb à défaut
-#   {{ year }}      année de sortie, si connue
-#   {{ imdb_id }}   identifiant IMDb canonique
-#   {{ first_id }}  identifiant de la première phrase de la fenêtre
-#   {{ last_id }}   identifiant de la dernière phrase de la fenêtre
-#   {{ chunk }}     les lignes de la fenêtre, préfixées de leur identifiant
+# Available substitutions:
+#   {{ title }}     resolved title label, or the IMDb identifier as a fallback
+#   {{ year }}      release year, if known
+#   {{ imdb_id }}   canonical IMDb identifier
+#   {{ first_id }}  identifier of the chunk's first sentence
+#   {{ last_id }}   identifier of the chunk's last sentence
+#   {{ chunk }}     the chunk's lines, prefixed with their identifier
 prompt:
   system: |
-    Tu analyses des extraits de sous-titres de films et de séries.
-    Tu réponds uniquement par un objet JSON conforme au schéma demandé.
-    Tu ne cites que des répliques réellement présentes dans l'extrait fourni.
-    En cas de doute, réponds matched: false.
+    You analyze excerpts of movie and TV show subtitles.
+    You answer only with a JSON object matching the requested schema.
+    You only quote lines that are actually present in the excerpt provided.
+    When in doubt, answer matched: false.
 
   user: |
-    Titre : {{ title }} ({{ year }}) — {{ imdb_id }}
-    Extrait : lignes {{ first_id }} à {{ last_id }}
+    Title: {{ title }} ({{ year }}) — {{ imdb_id }}
+    Excerpt: lines {{ first_id }} to {{ last_id }}
 
     {{ chunk }}
 
-    Cet extrait montre-t-il un personnage en train de cuisiner, ou une conversation
-    portant sur la préparation d'un repas ?
+    Does this excerpt show a character cooking, or a conversation about preparing a
+    meal?
 
 # --------------------------------------------------------------------------------------
-# Sortie attendue
+# Expected output
 # --------------------------------------------------------------------------------------
-# `schema` est transmis à Ollama pour contraindre la génération, puis la réponse est
-# revérifiée côté client : la contrainte réduit les écarts, elle ne les élimine pas.
+# `schema` is passed to Ollama to constrain generation, then the response is re-checked
+# client-side: the constraint reduces deviations, it does not eliminate them.
 output:
   format: json
   schema:
@@ -110,19 +110,19 @@ output:
     properties:
       matched:
         type: boolean
-        description: Vrai si l'extrait correspond à la question posée.
+        description: True if the excerpt matches the question asked.
       confidence:
         type: number
-        description: Confiance entre 0 et 1.
+        description: Confidence between 0 and 1.
       quotes:
         type: array
-        description: Répliques citées littéralement depuis l'extrait.
+        description: Lines quoted verbatim from the excerpt.
         items:
           type: string
     required: [matched]
     additionalProperties: false
 
-# Champ booléen de la réponse qui alimente la colonne `results.matched`, et donc ce que
-# `glyphwell search export` retient par défaut. `null` : tout résultat produit compte comme
-# une correspondance.
+# Boolean field of the response that feeds the `results.matched` column, and therefore
+# what `glyphwell search export` keeps by default. `null`: every produced result counts
+# as a match.
 match_when: matched

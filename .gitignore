@@ -1,9 +1,9 @@
-# Environnements virtuels
+# Virtual environments
 .venv/
 venv/
 env/
 
-# Artefacts Python
+# Python artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -11,7 +11,7 @@ build/
 dist/
 .eggs/
 
-# Caches d'outillage
+# Tooling caches
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
@@ -20,10 +20,10 @@ dist/
 htmlcov/
 coverage.xml
 
-# Données du projet : corpus OPUS, datasets IMDb, bases SQLite.
-# Volumineux (plusieurs dizaines de Go) et entièrement reconstructible.
-# Ancré à la racine : une règle `data/` non ancrée exclurait aussi tests/data/,
-# donc les fixtures de test, et la CI échouerait sur un clone frais.
+# Project data: OPUS corpus, IMDb datasets, SQLite databases.
+# Large (several dozen GB) and fully reconstructible.
+# Anchored at the root: an unanchored `data/` rule would also exclude tests/data/,
+# i.e. the test fixtures, and CI would fail on a fresh clone.
 /data/
 *.db
 *.db-wal
@@ -31,11 +31,11 @@ coverage.xml
 *.sqlite
 *.sqlite3
 
-# Secrets et configuration locale
+# Secrets and local configuration
 .env
 .env.local
 
-# Éditeurs / OS
+# Editors / OS
 .idea/
 .vscode/
 Thumbs.db

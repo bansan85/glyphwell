@@ -1,15 +1,15 @@
--- Schéma glyphwell — version 1 (PRAGMA user_version).
+-- glyphwell schema — version 1 (PRAGMA user_version).
 --
--- Volontairement SANS FTS5 : le texte des sous-titres n'est ni copié ni indexé ici.
--- L'archive zip du corpus OPUS reste la seule source du texte, lue à la volée sans
--- jamais être décompressée ; cette base ne contient que le catalogue et l'état de
--- progression des recherches.
+-- Deliberately WITHOUT FTS5: subtitle text is neither copied nor indexed here.
+-- The OPUS corpus zip archive remains the sole source of the text, read on the fly and
+-- never decompressed; this database only holds the catalog and the search progress
+-- state.
 
 -- ---------------------------------------------------------------------------
--- Titres (source primaire : datasets IMDb officiels)
+-- Titles (primary source: official IMDb datasets)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS titles (
-    imdb_id          TEXT PRIMARY KEY,          -- forme canonique 'tt0133093'
+    imdb_id          TEXT PRIMARY KEY,          -- canonical form 'tt0133093'
     title_type       TEXT,                      -- movie | tvEpisode | tvSeries | short | ...
     primary_title    TEXT,
     original_title   TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS titles (
     end_year         INTEGER,
     is_adult         INTEGER NOT NULL DEFAULT 0,
     runtime_minutes  INTEGER,
-    -- Renseignés depuis title.episode.tsv, pour les épisodes uniquement.
+    -- Filled in from title.episode.tsv, episodes only.
     parent_imdb_id   TEXT,
     season_number    INTEGER,
     episode_number   INTEGER,
@@ -30,29 +30,29 @@ CREATE INDEX IF NOT EXISTS idx_titles_parent ON titles (parent_imdb_id)
 CREATE INDEX IF NOT EXISTS idx_titles_type_year ON titles (title_type, start_year);
 
 -- ---------------------------------------------------------------------------
--- Fichiers de sous-titres du corpus
+-- Corpus subtitle files
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS subtitle_files (
     file_id                INTEGER PRIMARY KEY,
     opus_version           TEXT NOT NULL,       -- 'v2024'
     language               TEXT NOT NULL,       -- 'en'
     imdb_id                TEXT NOT NULL,
-    -- Identifiant du sous-titre sur opensubtitles.org, porté par le nom de fichier : il
-    -- permet de remonter à la fiche d'origine.
+    -- Identifier of the subtitle on opensubtitles.org, carried by the file name: it
+    -- allows tracing back to the original listing.
     opensubtitles_file_id  TEXT NOT NULL,
-    -- Nom du membre dans l'archive zip, séparateur '/', préfixe inclus :
-    -- 'OpenSubtitles/raw/en/1999/0133093/3660124.xml'. L'archive n'étant jamais
-    -- décompressée, c'est la seule clé permettant d'ouvrir le fichier.
+    -- Member name within the zip archive, '/' separator, prefix included:
+    -- 'OpenSubtitles/raw/en/1999/0133093/3660124.xml'. Since the archive is never
+    -- decompressed, this is the only key that allows opening the file.
     rel_path               TEXT NOT NULL,
-    year                   INTEGER,             -- année portée par l'arborescence OPUS
-    sha256                 TEXT,                -- NULL tant que le fichier n'a pas été haché
+    year                   INTEGER,             -- year carried by the OPUS directory tree
+    sha256                 TEXT,                -- NULL until the file has been hashed
     size_bytes             INTEGER,
-    sentence_count         INTEGER,             -- NULL tant que le fichier n'a pas été lu
+    sentence_count         INTEGER,             -- NULL until the file has been read
     discovered_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
 
-    -- Un même sous-titre peut exister dans plusieurs releases OPUS : la version fait
-    -- partie de l'identité du fichier.
+    -- The same subtitle can exist in several OPUS releases: the version is part of the
+    -- file's identity.
     UNIQUE (opus_version, language, rel_path)
 ) STRICT;
 
@@ -61,16 +61,16 @@ CREATE INDEX IF NOT EXISTS idx_subtitle_files_scan
     ON subtitle_files (opus_version, language, rel_path);
 
 -- ---------------------------------------------------------------------------
--- Recherches
+-- Searches
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS runs (
     run_id            INTEGER PRIMARY KEY,
     manifest_path     TEXT NOT NULL,
-    -- SHA-256 du YAML. Identifie la recherche : modifier le manifeste crée un nouveau run
-    -- au lieu de mélanger des résultats produits par deux prompts différents.
+    -- SHA-256 of the YAML. Identifies the search: modifying the manifest creates a new
+    -- run instead of mixing results produced by two different prompts.
     manifest_hash     TEXT NOT NULL,
-    -- Copie intégrale du YAML au lancement : un run reste interprétable même si le fichier
-    -- source est modifié ou supprimé ensuite.
+    -- Full copy of the YAML at launch time: a run stays interpretable even if the source
+    -- file is later modified or deleted.
     manifest_snapshot TEXT NOT NULL,
     model             TEXT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'pending',  -- pending|running|paused|done|failed
@@ -82,10 +82,10 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_hash ON runs (manifest_hash, status);
 
 -- ---------------------------------------------------------------------------
--- File de travail et POINT DE REPRISE
+-- Work queue and RESUME POINT
 -- ---------------------------------------------------------------------------
--- Une ligne par (recherche, fichier). C'est ici que vit la capacité de reprendre au
--- milieu d'un sous-titre.
+-- One row per (search, file). This is where the ability to resume in the middle of a
+-- subtitle lives.
 CREATE TABLE IF NOT EXISTS run_files (
     run_id               INTEGER NOT NULL REFERENCES runs (run_id) ON DELETE CASCADE,
     file_id              INTEGER NOT NULL
@@ -93,14 +93,14 @@ CREATE TABLE IF NOT EXISTS run_files (
     -- pending | in_progress | done | skipped | error
     status               TEXT NOT NULL DEFAULT 'pending',
 
-    -- sha256 du fichier au moment de sa mise en file. Sert à détecter qu'une version plus
-    -- récente du sous-titre est apparue depuis (cf. corpus refresh).
+    -- sha256 of the file at the time it was queued. Used to detect that a newer version
+    -- of the subtitle has since appeared (see corpus refresh).
     file_sha256          TEXT,
 
-    -- Curseur de reprise. `last_sentence_index` fait autorité : position, dans le flux de
-    -- phrases du fichier, de la dernière phrase couverte par une fenêtre dont le résultat
-    -- est committé. `last_sentence_id` est l'attribut <s id> correspondant, conservé pour
-    -- la traçabilité (opaque, pas forcément numérique).
+    -- Resume cursor. `last_sentence_index` is authoritative: position, in the file's
+    -- sentence stream, of the last sentence covered by a chunk whose result has been
+    -- committed. `last_sentence_id` is the corresponding <s id> attribute, kept for
+    -- traceability (opaque, not necessarily numeric).
     last_sentence_index  INTEGER,
     last_sentence_id     TEXT,
     chunks_done          INTEGER NOT NULL DEFAULT 0,
@@ -112,13 +112,13 @@ CREATE TABLE IF NOT EXISTS run_files (
     PRIMARY KEY (run_id, file_id)
 ) STRICT;
 
--- La reprise sélectionne les fichiers non terminés dans un ordre déterministe : le tri se
--- fait sur subtitle_files.rel_path (cf. glyphwell.search.planner).
+-- Resuming selects unfinished files in a deterministic order: the sort is done on
+-- subtitle_files.rel_path (see glyphwell.search.planner).
 CREATE INDEX IF NOT EXISTS idx_run_files_pending ON run_files (run_id, status);
 CREATE INDEX IF NOT EXISTS idx_run_files_file ON run_files (file_id);
 
 -- ---------------------------------------------------------------------------
--- Résultats
+-- Results
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS results (
     result_id            INTEGER PRIMARY KEY,
@@ -126,21 +126,21 @@ CREATE TABLE IF NOT EXISTS results (
     file_id              INTEGER NOT NULL
                              REFERENCES subtitle_files (file_id) ON DELETE CASCADE,
 
-    chunk_index          INTEGER NOT NULL,      -- position de la fenêtre dans le fichier
+    chunk_index          INTEGER NOT NULL,      -- position of the chunk within the file
     first_sentence_index INTEGER NOT NULL,
     last_sentence_index  INTEGER NOT NULL,
     first_sentence_id    TEXT,
     last_sentence_id     TEXT,
 
     matched              INTEGER NOT NULL DEFAULT 0,
-    payload              TEXT,                  -- réponse JSON validée contre output.schema
+    payload              TEXT,                  -- JSON response validated against output.schema
     model                TEXT NOT NULL,
     latency_ms           INTEGER,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
 
-    -- Idempotence de la reprise : rejouer une fenêtre déjà traitée ne peut pas produire de
-    -- doublon (les écritures utilisent INSERT OR IGNORE). Suppose un découpage
-    -- déterministe, garanti par l'ordre de parcours fixe du planner.
+    -- Idempotence of resuming: replaying an already-processed chunk cannot produce a
+    -- duplicate (writes use INSERT OR IGNORE). This assumes deterministic chunking,
+    -- guaranteed by the planner's fixed traversal order.
     UNIQUE (run_id, file_id, chunk_index)
 ) STRICT;
 
@@ -148,7 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_results_matches ON results (run_id, matched);
 CREATE INDEX IF NOT EXISTS idx_results_file ON results (run_id, file_id);
 
 -- ---------------------------------------------------------------------------
--- Traçabilité des acquisitions
+-- Acquisition traceability
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS corpus_downloads (
     download_id   INTEGER PRIMARY KEY,
@@ -160,8 +160,8 @@ CREATE TABLE IF NOT EXISTS corpus_downloads (
     sha256        TEXT,
     status        TEXT NOT NULL DEFAULT 'pending',  -- pending|downloaded|failed
     downloaded_at TEXT,
-    -- Date de la vérification de l'archive (ouverture du zip, comptage des membres).
-    -- L'archive n'est jamais décompressée : il n'y a pas d'étape d'extraction.
+    -- Date the archive was verified (zip opened, members counted).
+    -- The archive is never decompressed: there is no extraction step.
     verified_at   TEXT,
     UNIQUE (opus_corpus, opus_version, language)
 ) STRICT;
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS imports (
     import_id   INTEGER PRIMARY KEY,
     source      TEXT NOT NULL,                 -- imdb_basics | imdb_episode
     file_name   TEXT NOT NULL,
-    released_at TEXT,                          -- date de publication du dataset, si connue
+    released_at TEXT,                          -- dataset release date, if known
     row_count   INTEGER,
     imported_at TEXT NOT NULL DEFAULT (datetime('now'))
 ) STRICT;

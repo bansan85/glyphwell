@@ -1,7 +1,7 @@
-"""Hiérarchie d'exceptions du projet.
+"""The project's exception hierarchy.
 
-Toute erreur attendue dérive de `GlyphwellError` : la CLI peut ainsi présenter un message
-lisible plutôt qu'une trace, et laisser remonter les vraies anomalies de programmation.
+Every expected error derives from `GlyphwellError`: this lets the CLI present a readable
+message instead of a traceback, while letting genuine programming errors propagate.
 """
 
 __all__ = [
@@ -21,48 +21,48 @@ __all__ = [
 
 
 class GlyphwellError(Exception):
-    """Racine de toutes les erreurs attendues de glyphwell."""
+    """Root of all expected glyphwell errors."""
 
 
 class ConfigurationError(GlyphwellError):
-    """Configuration invalide ou incomplète (variables d'environnement, chemins)."""
+    """Invalid or incomplete configuration (environment variables, paths)."""
 
 
 class DatabaseError(GlyphwellError):
-    """Échec d'une opération SQLite."""
+    """Failure of a SQLite operation."""
 
 
 class SchemaVersionError(DatabaseError):
-    """La base ouverte ne porte pas la version de schéma attendue."""
+    """The opened database does not carry the expected schema version."""
 
 
 class CorpusError(GlyphwellError):
-    """Problème sur le corpus de sous-titres."""
+    """Problem with the subtitle corpus."""
 
 
 class CorpusLayoutError(CorpusError):
-    """Un chemin ne respecte pas l'arborescence attendue du corpus OPUS."""
+    """A path does not conform to the expected OPUS corpus layout."""
 
 
 class CorpusReadError(CorpusError):
-    """Un fichier de sous-titre est illisible ou irrécupérablement mal formé."""
+    """A subtitle file is unreadable or irrecoverably malformed."""
 
 
 class MetadataError(GlyphwellError):
-    """Échec du téléchargement, de l'import ou de la résolution des métadonnées."""
+    """Failure of metadata download, import, or resolution."""
 
 
 class ManifestError(GlyphwellError):
-    """Manifeste de recherche introuvable, mal formé ou invalide."""
+    """Search manifest not found, malformed, or invalid."""
 
 
 class OllamaError(GlyphwellError):
-    """Échec de communication avec le serveur Ollama."""
+    """Failure to communicate with the Ollama server."""
 
 
 class ModelOutputError(OllamaError):
-    """La réponse du modèle ne respecte pas le schéma de sortie du manifeste."""
+    """The model's response does not conform to the manifest's output schema."""
 
 
 class SearchError(GlyphwellError):
-    """Échec de la planification ou de l'exécution d'une recherche."""
+    """Failure of search planning or execution."""

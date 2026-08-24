@@ -1,4 +1,4 @@
-"""Résolution des titres et import des datasets de métadonnées."""
+"""Title resolution and metadata dataset import."""
 
 from glyphwell.metadata.imdb_datasets import ImdbDataset
 from glyphwell.metadata.resolver import SqliteTitleProvider, Title, TitleProvider
