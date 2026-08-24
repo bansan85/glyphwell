@@ -1,8 +1,9 @@
 -- Schéma glyphwell — version 1 (PRAGMA user_version).
 --
--- Volontairement SANS FTS5 : le texte des sous-titres n'est ni copié ni indexé ici. Les
--- fichiers XML du corpus OPUS restent la seule source du texte ; cette base ne contient
--- que le catalogue et l'état de progression des recherches.
+-- Volontairement SANS FTS5 : le texte des sous-titres n'est ni copié ni indexé ici.
+-- L'archive zip du corpus OPUS reste la seule source du texte, lue à la volée sans
+-- jamais être décompressée ; cette base ne contient que le catalogue et l'état de
+-- progression des recherches.
 
 -- ---------------------------------------------------------------------------
 -- Titres (source primaire : datasets IMDb officiels)
@@ -32,18 +33,23 @@ CREATE INDEX IF NOT EXISTS idx_titles_type_year ON titles (title_type, start_yea
 -- Fichiers de sous-titres du corpus
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS subtitle_files (
-    file_id         INTEGER PRIMARY KEY,
-    opus_version    TEXT NOT NULL,              -- 'v2018'
-    language        TEXT NOT NULL,              -- 'en'
-    imdb_id         TEXT NOT NULL,
-    opus_file_id    TEXT NOT NULL,              -- nom de fichier sans extension
-    rel_path        TEXT NOT NULL,              -- relatif à la racine du corpus, séparateur '/'
-    year            INTEGER,                    -- année portée par l'arborescence OPUS
-    sha256          TEXT,                       -- NULL tant que le fichier n'a pas été haché
-    size_bytes      INTEGER,
-    sentence_count  INTEGER,                    -- NULL tant que le fichier n'a pas été lu
-    discovered_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    file_id                INTEGER PRIMARY KEY,
+    opus_version           TEXT NOT NULL,       -- 'v2024'
+    language               TEXT NOT NULL,       -- 'en'
+    imdb_id                TEXT NOT NULL,
+    -- Identifiant du sous-titre sur opensubtitles.org, porté par le nom de fichier : il
+    -- permet de remonter à la fiche d'origine.
+    opensubtitles_file_id  TEXT NOT NULL,
+    -- Nom du membre dans l'archive zip, séparateur '/', préfixe inclus :
+    -- 'OpenSubtitles/raw/en/1999/0133093/3660124.xml'. L'archive n'étant jamais
+    -- décompressée, c'est la seule clé permettant d'ouvrir le fichier.
+    rel_path               TEXT NOT NULL,
+    year                   INTEGER,             -- année portée par l'arborescence OPUS
+    sha256                 TEXT,                -- NULL tant que le fichier n'a pas été haché
+    size_bytes             INTEGER,
+    sentence_count         INTEGER,             -- NULL tant que le fichier n'a pas été lu
+    discovered_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
 
     -- Un même sous-titre peut exister dans plusieurs releases OPUS : la version fait
     -- partie de l'identité du fichier.
@@ -152,9 +158,11 @@ CREATE TABLE IF NOT EXISTS corpus_downloads (
     url           TEXT,
     archive_path  TEXT,
     sha256        TEXT,
-    status        TEXT NOT NULL DEFAULT 'pending',  -- pending|downloaded|extracted|failed
+    status        TEXT NOT NULL DEFAULT 'pending',  -- pending|downloaded|failed
     downloaded_at TEXT,
-    extracted_at  TEXT,
+    -- Date de la vérification de l'archive (ouverture du zip, comptage des membres).
+    -- L'archive n'est jamais décompressée : il n'y a pas d'étape d'extraction.
+    verified_at   TEXT,
     UNIQUE (opus_corpus, opus_version, language)
 ) STRICT;
 

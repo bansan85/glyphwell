@@ -1,16 +1,15 @@
-"""Arborescence du corpus OPUS OpenSubtitles.
+"""Arborescence interne de l'archive OPUS OpenSubtitles.
 
-Structure attendue, relative à la racine du corpus extrait :
+Nom des membres du zip, préfixe compris :
 
-    <langue>/<année>/<imdb_id>/<opus_file_id>.xml
+    <corpus>/<preprocessing>/<langue>/<année>/<imdb_id>/<opensubtitles_file_id>.xml
+    OpenSubtitles/raw/fr/2022/1596342/1957893755.xml
 
-L'identifiant IMDb y apparaît **nu et zéro-paddé** (``133093``), pas sous sa forme
-canonique (``tt0133093``). Toute la normalisation est concentrée ici.
+L'identifiant IMDb y apparaît **nu** (``1596342``), pas sous sa forme canonique
+(``tt1596342``). Toute la normalisation est concentrée ici.
 
-ATTENTION : cette structure est déduite de l'usage, elle n'est pas documentée sur le site
-OPUS actuel. C'est la raison pour laquelle elle est isolée derrière deux fonctions et
-couverte par un test sur échantillon : si le premier ``corpus fetch`` révèle une autre
-disposition, seul ce module change.
+L'archive n'étant jamais décompressée, ces chemins ne désignent aucun fichier du disque :
+ce sont les clés d'ouverture de `glyphwell.corpus.archive.CorpusArchive`.
 
 STATUT : stubs, hors constantes.
 """
@@ -19,9 +18,12 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from glyphwell.types import ImdbId, LanguageCode, OpusFileId
+from glyphwell.types import ImdbId, LanguageCode, OpenSubtitlesFileId
+
+if TYPE_CHECKING:
+    from glyphwell.corpus.archive import CorpusArchive
 
 __all__ = [
     "IMDB_ID_WIDTH",
@@ -38,8 +40,13 @@ IMDB_ID_WIDTH: Final = 7
 Les identifiants récents dépassent 7 chiffres et ne sont alors pas paddés du tout.
 """
 
-SUBTITLE_SUFFIXES: Final = (".xml", ".xml.gz")
-"""Extensions rencontrées dans le corpus, selon que l'archive a été décompressée ou non."""
+SUBTITLE_SUFFIXES: Final = (".xml",)
+"""Extensions des membres de sous-titres dans l'archive.
+
+Les membres sont des XML simples : le zip est le seul niveau de compression. Tout membre
+d'un autre suffixe est compté et signalé par ``corpus fetch`` plutôt qu'absorbé
+silencieusement — ce serait le signe que cette hypothèse a cessé d'être vraie.
+"""
 
 _IMDB_NUMERIC = re.compile(r"^\d+$")
 
@@ -49,20 +56,20 @@ class CorpusEntry:
     """Un fichier de sous-titre localisé dans l'arborescence du corpus.
 
     Attributes:
-        rel_path: chemin relatif à la racine du corpus, séparateurs normalisés en ``/``.
-            C'est la clé naturelle du fichier en base et la clé de tri de la file de
-            travail.
+        rel_path: nom du membre dans l'archive, préfixe compris, séparateurs ``/``.
+            C'est la clé naturelle du fichier en base, la clé de tri de la file de
+            travail, et la clé d'ouverture du membre.
         language: code de langue OPUS.
         year: année portée par l'arborescence, `None` si le répertoire n'est pas une année.
         imdb_id: identifiant canonique, préfixe ``tt`` inclus.
-        opus_file_id: nom du fichier sans extension.
+        opensubtitles_file_id: identifiant du sous-titre sur opensubtitles.org.
     """
 
     rel_path: str
     language: LanguageCode
     year: int | None
     imdb_id: ImdbId
-    opus_file_id: OpusFileId
+    opensubtitles_file_id: OpenSubtitlesFileId
 
 
 def normalize_imdb_id(raw: str) -> ImdbId:
@@ -87,8 +94,8 @@ def parse_entry(rel_path: Path) -> CorpusEntry:
     """Interprète un chemin relatif du corpus.
 
     Args:
-        rel_path: chemin relatif à la racine du corpus, par exemple
-            ``en/1999/0133093/3660124.xml``.
+        rel_path: nom d'un membre de l'archive, par exemple
+            ``OpenSubtitles/raw/en/1999/0133093/3660124.xml``.
 
     Returns:
         L'entrée décrite par ce chemin.
@@ -99,15 +106,19 @@ def parse_entry(rel_path: Path) -> CorpusEntry:
     raise NotImplementedError
 
 
-def iter_corpus(root: Path, *, language: LanguageCode | None = None) -> Iterator[CorpusEntry]:
-    """Parcourt le corpus et produit une entrée par fichier de sous-titre.
+def iter_corpus(
+    archive: "CorpusArchive",
+    *,
+    language: LanguageCode | None = None,
+) -> Iterator[CorpusEntry]:
+    """Parcourt l'archive et produit une entrée par membre de sous-titre.
 
-    Générateur : le corpus compte des centaines de milliers de fichiers et ne doit jamais
-    être matérialisé en mémoire. Les chemins qui ne respectent pas l'arborescence sont
+    Générateur : l'archive compte des centaines de milliers de membres et ne doit jamais
+    être matérialisée en mémoire. Les noms qui ne respectent pas l'arborescence sont
     journalisés puis ignorés, plutôt que d'interrompre un scan de plusieurs minutes.
 
     Args:
-        root: racine du corpus extrait.
+        archive: archive ouverte, jamais décompressée.
         language: restreint le parcours à une langue, ou toutes si `None`.
 
     Yields:

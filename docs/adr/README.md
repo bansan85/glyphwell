@@ -18,6 +18,8 @@ recorded here.
 | [0005](0005-sliding-window-chunking-and-resume.md) | Analyse sliding windows of sentences and resume inside a file | Accepted | 2026-08-24 |
 | [0006](0006-freshness-via-opus-version-and-sha256.md) | Detect staleness with the pair (opus_version, sha256) | Accepted | 2026-08-24 |
 | [0007](0007-very-strict-typing.md) | Enforce very strict typing with no escape hatches | Accepted | 2026-08-24 |
+| [0008](0008-never-extract-the-corpus-archive.md) | Never extract the corpus archive | Accepted | 2026-08-25 |
+| [0009](0009-opustools-for-index-httpx-for-transfer.md) | Use opustools as the OPUS index only, and httpx for the transfer | Accepted | 2026-08-25 |
 
 ## Statuses
 
