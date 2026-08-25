@@ -368,15 +368,14 @@ def _catalog(
     with _progress_bar() as progress:
         task = progress.add_task("cataloging", total=total)
         batch: list[CorpusEntry] = []
-        for entry in iter_corpus(archive, language=language):
+        entries = iter_corpus(archive, language=language, on_member=lambda: progress.advance(task))
+        for entry in entries:
             batch.append(entry)
             if len(batch) >= _CATALOG_BATCH_SIZE:
                 count += _flush_catalog(conn, repo, opus_version, batch)
-                progress.advance(task, len(batch))
                 batch.clear()
         if batch:
             count += _flush_catalog(conn, repo, opus_version, batch)
-            progress.advance(task, len(batch))
     return count
 
 

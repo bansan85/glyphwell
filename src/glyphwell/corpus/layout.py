@@ -13,7 +13,7 @@ the opening keys of `glyphwell.corpus.archive.CorpusArchive`.
 """
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
@@ -153,6 +153,7 @@ def iter_corpus(
     archive: "CorpusArchive",
     *,
     language: LanguageCode | None = None,
+    on_member: Callable[[], None] | None = None,
 ) -> Iterator[CorpusEntry]:
     """Walks the archive and yields one entry per subtitle member.
 
@@ -163,12 +164,19 @@ def iter_corpus(
     Args:
         archive: opened archive, never decompressed.
         language: restricts the walk to one language, or all if `None`.
+        on_member: called once per member visited, whether or not it ends up parsed
+            and yielded. A caller driving a progress bar off `ArchiveSummary.subtitle_count`
+            (every member, any language) needs this: counting only yielded entries would
+            leave the bar short by exactly the members a layout mismatch or a language
+            filter discards.
 
     Yields:
         The entries encountered, in no guaranteed order — the planner is what sorts them.
     """
     skipped = 0
     for member in archive.iter_members():
+        if on_member is not None:
+            on_member()
         try:
             entry = parse_entry(Path(member.rel_path))
         except CorpusLayoutError as exc:

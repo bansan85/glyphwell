@@ -246,8 +246,15 @@ breaking changes for users. They do change names that were already committed.
   `"Giliap"`, a real 1975 film) — IMDb's datasets are not CSV-quoted. Python's default
   `csv` dialect treats a leading `"` as opening a quoted field and silently strips it;
   `iter_rows` now reads with `quoting=csv.QUOTE_NONE`.
+- **`corpus index`'s progress bar never reached 100%.** It was sized off
+  `ArchiveSummary.subtitle_count` (every `.xml` member, any language) but only advanced
+  per batch of entries `iter_corpus` actually yielded, which excludes members outside the
+  requested language and ones that fail the layout check — on a real archive, several
+  hundred thousand members short of the total. `iter_corpus` now takes an optional
+  `on_member` callback, called once per member visited regardless of outcome, and
+  `_catalog` drives the bar from it instead of from batch sizes.
 
-All four defects are covered by regression tests.
+All five defects are covered by regression tests.
 
 ### Public API
 

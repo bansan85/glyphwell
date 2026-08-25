@@ -83,6 +83,35 @@ def test_index_catalogs_every_subtitle(tmp_path: Path) -> None:
         assert row.year == 1999
 
 
+def test_index_catalogs_archive_with_skipped_members(tmp_path: Path) -> None:
+    """Members outside the target language or the expected layout must still be
+    counted towards `Subtitles in archive`, not just the ones actually cataloged —
+    they were previously invisible to the progress bar's total (see `iter_corpus`'s
+    `on_member` callback).
+    """
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, _env_file=None)
+    archive_path = tmp_path / "corpus.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "OpenSubtitles/raw/en/1999/0133093/1.xml", '<document><s id="1">Hello.</s></document>'
+        )
+        archive.writestr(
+            "OpenSubtitles/raw/fr/2001/0234215/2.xml", '<document><s id="1">Bonjour.</s></document>'
+        )
+        archive.writestr("bad/shape.xml", "<document/>")
+
+    init = runner.invoke(app, ["--data-dir", str(data_dir), "db", "init"])
+    assert init.exit_code == 0, init.output
+    _seed_download(settings, archive_path)
+
+    result = runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
+    assert result.exit_code == 0, result.output
+
+    with connect(settings.database_path) as conn:
+        assert SubtitleFilesRepository(conn).count() == 1
+
+
 def test_index_is_idempotent(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     settings = Settings(data_dir=data_dir, _env_file=None)

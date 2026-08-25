@@ -87,3 +87,31 @@ def test_iter_corpus_skips_unparsable_members_and_filters_by_language(tmp_path: 
     assert [entry.rel_path for entry in en_entries] == [
         "OpenSubtitles/raw/en/1999/0133093/3660124.xml"
     ]
+
+
+def test_iter_corpus_calls_on_member_for_every_member_regardless_of_outcome(
+    tmp_path: Path,
+) -> None:
+    """A progress bar sized off the archive's total member count must reach 100%.
+
+    `on_member` has to fire for members discarded by the language filter and for ones
+    that fail to parse, not just for the entries actually yielded — otherwise a caller
+    driving a progress bar from it stalls short of the total.
+    """
+    path = tmp_path / "mixed.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("OpenSubtitles/raw/en/1999/0133093/3660124.xml", "<document/>")
+        archive.writestr("OpenSubtitles/raw/fr/2022/1596342/1957893755.xml", "<document/>")
+        archive.writestr("bad/shape.xml", "<document/>")
+
+    visited = 0
+
+    def on_member() -> None:
+        nonlocal visited
+        visited += 1
+
+    with CorpusArchive(path) as corpus_archive:
+        en_entries = list(iter_corpus(corpus_archive, language="en", on_member=on_member))
+
+    assert visited == 3
+    assert len(en_entries) == 1
