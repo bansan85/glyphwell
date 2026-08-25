@@ -19,13 +19,17 @@ from glyphwell.errors import CorpusLayoutError
         ("tt0133093", "tt0133093"),
         ("tt133093", "tt0133093"),
         ("  0133093  ", "tt0133093"),
+        ("674159_47763_2_13", "tt0674159"),
+        ("6741598_3107288_4_8", "tt6741598"),
     ],
 )
 def test_normalize_imdb_id_accepts_every_known_shape(raw: str, expected: str) -> None:
     assert normalize_imdb_id(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", "tt", "abc", "12a34", "tt-1"])
+@pytest.mark.parametrize(
+    "raw", ["", "tt", "abc", "12a34", "tt-1", "674159_47763_2", "674159_47763_2_13_1"]
+)
 def test_normalize_imdb_id_rejects_garbage(raw: str) -> None:
     with pytest.raises(CorpusLayoutError):
         normalize_imdb_id(raw)
@@ -39,6 +43,22 @@ def test_parse_entry_reads_the_documented_example() -> None:
         year=2022,
         imdb_id="tt1596342",
         opensubtitles_file_id="1957893755",
+    )
+
+
+def test_parse_entry_reads_a_tv_episode_compound_segment() -> None:
+    """674159_47763_2_13: episode S02E13 (tt0674159) of series tt0047763.
+
+    Confirmed against `title.episode.tsv` (see the module docstring); only the episode's
+    own id survives normalization.
+    """
+    entry = parse_entry(Path("OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml"))
+    assert entry == CorpusEntry(
+        rel_path="OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml",
+        language="en",
+        year=1956,
+        imdb_id="tt0674159",
+        opensubtitles_file_id="1957044904",
     )
 
 

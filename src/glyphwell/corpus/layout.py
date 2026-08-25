@@ -8,6 +8,13 @@ Name of the zip members, prefix included:
 The IMDb identifier appears there **bare** (``1596342``), not in its canonical form
 (``tt1596342``). All normalization is concentrated here.
 
+For a TV episode, that segment is not a bare id: OPUS packs four underscore-separated
+fields into it instead, ``<episode_id>_<series_id>_<season>_<episode>`` (e.g.
+``674159_47763_2_13``, episode S02E13 of series ``tt0047763``, itself ``tt0674159``).
+Measured on the real ``v2024``/``raw``/``en`` archive, this compound form is not an edge
+case: **64.5%** of subtitle members (all TV episodes) use it. `normalize_imdb_id` keeps
+only the episode's own id — see its docstring for why.
+
 Since the archive is never decompressed, these paths designate no file on disk: they are
 the opening keys of `glyphwell.corpus.archive.CorpusArchive`.
 """
@@ -51,6 +58,8 @@ would be the sign that this assumption has stopped being true.
 """
 
 _IMDB_NUMERIC = re.compile(r"^\d+$")
+_EPISODE_SEGMENT = re.compile(r"^(?P<episode_imdb_id>\d+)_\d+_\d+_\d+$")
+"""TV-episode variant of the layout's `imdb_id` segment — see the module docstring."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -78,7 +87,14 @@ def normalize_imdb_id(raw: str) -> ImdbId:
     """Converts an IMDb identifier to its canonical ``tt#######`` form.
 
     Accepts the corpus's bare form (``133093``), an already-prefixed one (``tt0133093``),
-    and identifiers longer than seven digits, which are not padded.
+    identifiers longer than seven digits (not padded), and the TV-episode compound form
+    the layout uses in place of a bare id: ``<episode_id>_<series_id>_<season>_<episode>``
+    (e.g. ``674159_47763_2_13``). Only the episode's own id (the first field) is kept —
+    the series id, season, and episode number are OPUS's own scrape-time copy of data the
+    IMDb datasets already carry authoritatively (``title.episode.tsv``'s `parentTconst` /
+    `seasonNumber` / `episodeNumber`, resolved separately by `metadata/resolver.py`), and
+    spot-checking the live archive against that dataset shows the OPUS-side copy can have
+    drifted from IMDb's current values, so it is never trusted here.
 
     Args:
         raw: identifier as it appears in a path or a dataset.
@@ -90,6 +106,9 @@ def normalize_imdb_id(raw: str) -> ImdbId:
         CorpusLayoutError: the string is not a recognizable IMDb identifier.
     """
     candidate = raw.strip()
+    episode_match = _EPISODE_SEGMENT.match(candidate)
+    if episode_match is not None:
+        candidate = episode_match.group("episode_imdb_id")
     digits = candidate.removeprefix("tt")
     if not digits or not _IMDB_NUMERIC.fullmatch(digits):
         message = f"not a recognizable IMDb identifier: {raw!r}"

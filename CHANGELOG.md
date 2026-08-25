@@ -253,8 +253,16 @@ breaking changes for users. They do change names that were already committed.
   hundred thousand members short of the total. `iter_corpus` now takes an optional
   `on_member` callback, called once per member visited regardless of outcome, and
   `_catalog` drives the bar from it instead of from batch sizes.
+- **`corpus index` silently dropped every TV episode.** The layout's `imdb_id` segment is
+  bare only for movies; for a TV episode OPUS packs four underscore-separated fields into
+  it instead (`<episode_id>_<series_id>_<season>_<episode>`), which
+  `normalize_imdb_id`'s bare-digits check rejected as unparsable — on the real
+  `v2024`/`raw`/`en` archive, 64.5% of subtitle members. `normalize_imdb_id` now
+  recognizes the compound form and keeps the episode's own id, discarding the embedded
+  series id/season/episode as a scrape-time copy of data the IMDb datasets already own
+  (ADR-0016).
 
-All five defects are covered by regression tests.
+All six defects are covered by regression tests.
 
 ### Public API
 
@@ -400,3 +408,4 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0013 — re-validate the model's JSON output client-side
 - ADR-0014 - one http client factory and a bounded TLS escape hatch
 - ADR-0015 — drop the per-file freshness checksum
+- ADR-0016 — keep only the episode id from the TV-episode compound segment

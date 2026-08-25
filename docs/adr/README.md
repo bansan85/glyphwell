@@ -26,6 +26,7 @@ recorded here.
 | [0013](0013-revalidate-ollama-json-output-client-side.md) | Re-validate the model's JSON output client-side | Accepted | 2026-08-25 |
 | [0014](0014-one-http-client-factory-and-a-bounded-tls-escape-hatch.md) | One HTTP client factory, and a bounded TLS escape hatch | Accepted | 2026-08-25 |
 | [0015](0015-drop-per-file-freshness-hash.md) | Drop the per-file freshness checksum | Accepted | 2026-08-25 |
+| [0016](0016-keep-only-the-episode-id-from-tv-compound-segments.md) | Keep only the episode id from the TV-episode compound segment | Accepted | 2026-08-25 |
 
 ## Statuses
 

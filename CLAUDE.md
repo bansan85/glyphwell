@@ -150,6 +150,19 @@ Five pitfalls hit already, not to be reintroduced:
   opensubtitles.org**, not an OPUS id: it identifies one specific translation, whereas
   `ImdbId` identifies the work. Don't conflate the two — that's the reason for the distinct
   aliases in [types.py](src/glyphwell/types.py).
+- **For a TV episode, the `imdb_id` segment is not bare.** OPUS instead packs four
+  underscore-separated fields into it:
+  `<episode_imdb_id>_<series_imdb_id>_<season>_<episode>`, e.g. `674159_47763_2_13`
+  (episode S02E13 of series `tt0047763`, itself `tt0674159` — confirmed against
+  `title.episode.tsv`'s `parentTconst`/`seasonNumber`/`episodeNumber`). Measured on the
+  real `v2024`/`raw`/`en` archive, this is not an edge case: **64.5%** of subtitle members
+  use this form — every TV episode. `normalize_imdb_id` in
+  [corpus/layout.py](src/glyphwell/corpus/layout.py) keeps only the first field: the
+  series id, season, and episode number are OPUS's own scrape-time copy of data the IMDb
+  datasets already carry authoritatively, and spot-checking the live archive against
+  `title.episode.tsv` shows the OPUS-side copy can have drifted from IMDb's current
+  values (season/episode off by one in a handful of the ~200 spot-checked entries) — never
+  trust it over a fresh `metadata/resolver.py` lookup. See ADR-0016.
 - Subtitle members are plain `.xml` files: the zip is the only layer of compression.
   `corpus fetch` counts members with an unexpected suffix and reports them instead of
   coding defensively against a hypothetical case. The `INFO`, `README`, `LICENSE` service
