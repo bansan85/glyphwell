@@ -23,6 +23,11 @@ from glyphwell.types import SentenceId
 __all__ = ["Sentence", "count_sentences", "iter_sentences"]
 
 _TIME_TAG = "time"
+# With content that never looks like XML at all (no "<" anywhere), libxml2's recover
+# mode is version-dependent: some versions raise XMLSyntaxError (caught below), others
+# silently parse nothing and leave iterparse's `.root` unset. Checking `.root` after the
+# loop catches the second case, which the exception handlers alone would miss.
+_NO_ROOT_MESSAGE = "malformed subtitle: no parseable XML content"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -72,6 +77,8 @@ def iter_sentences(stream: IO[bytes], *, start_index: int = 0) -> Iterator[Sente
                 yield _to_sentence(elem, position)
             position += 1
             _free(elem)
+        if context.root is None:
+            raise CorpusReadError(_NO_ROOT_MESSAGE)
     except etree.XMLSyntaxError as exc:
         message = f"malformed subtitle: {exc}"
         raise CorpusReadError(message) from exc
@@ -94,6 +101,8 @@ def count_sentences(stream: IO[bytes]) -> int:
         for _event, elem in context:
             count += 1
             _free(elem)
+        if context.root is None:
+            raise CorpusReadError(_NO_ROOT_MESSAGE)
     except etree.XMLSyntaxError as exc:
         message = f"malformed subtitle: {exc}"
         raise CorpusReadError(message) from exc
