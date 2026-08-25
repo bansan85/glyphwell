@@ -8,14 +8,13 @@
 #
 # Launch:  uv run glyphwell search run searches/example.yaml --limit 20
 
-name: ski_pistes
+name: character_names
 description: >
-  Extracts the names of ski slopes/trails (pistes) that characters ski on, discuss, or
-  refer to by name.
+  Extracts the names of characters mentioned or addressed in the excerpt.
 
-# Ollama model. Must be available locally (`ollama pull huihui_ai/qwen3-abliterated:14b`):
+# Ollama model. Must be available locally (`ollama pull fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b`):
 # the command checks this before scanning the corpus.
-model: huihui_ai/qwen3-abliterated:14b
+model: fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b
 
 # Options passed through as-is to Ollama.
 # temperature 0: reproducible results are wanted from one run to the next.
@@ -64,17 +63,11 @@ chunk:
 # kept. When in doubt, prefer `off`.
 #
 # mode: any (at least one pattern) | all (all of them) | none (none of them) | off (no filtering)
+# Character names can appear in almost any line of dialogue, so no substring prefilter
+# reliably discards a chunk without risking false negatives: left off.
 prefilter:
   mode: "off"
-  patterns:
-    - piste
-    - ski
-    - slope
-    - trail
-    - chairlift
-    - gondola
-    - mogul
-    - black diamond
+  patterns: []
   case_sensitive: false
   regex: false
 
@@ -93,8 +86,10 @@ prompt:
     You analyze excerpts of movie and TV show subtitles.
     You answer only with a JSON object matching the requested schema.
     You only quote lines that are actually present in the excerpt provided.
-    You only list a piste name when it is actually named in the excerpt, never invented
-    or inferred from context.
+    You only list a character name when it is actually named in the excerpt, never
+    invented or inferred from context.
+    A character name is a proper name used to address or refer to a person (or
+    personified being), not a generic term like "sir", "mom", or "doctor" used alone.
     When in doubt, answer matched: false.
 
   user: |
@@ -103,8 +98,8 @@ prompt:
 
     {{ chunk }}
 
-    Does this excerpt name a specific ski slope or trail (piste) that a character is
-    skiing on, discussing, or referring to by name? List every such name mentioned.
+    Does this excerpt name any character, whether they speak, are addressed, or are
+    merely referred to by name? List every such name mentioned.
 
 # --------------------------------------------------------------------------------------
 # Expected output
@@ -118,13 +113,13 @@ output:
     properties:
       matched:
         type: boolean
-        description: True if the excerpt names a specific ski slope or trail.
+        description: True if the excerpt names at least one character.
       confidence:
         type: number
         description: Confidence between 0 and 1.
-      piste_names:
+      character_names:
         type: array
-        description: Names of ski slopes/trails mentioned verbatim in the excerpt.
+        description: Character names mentioned verbatim in the excerpt.
         items:
           type: string
       quotes:
