@@ -27,6 +27,7 @@ recorded here.
 | [0014](0014-one-http-client-factory-and-a-bounded-tls-escape-hatch.md) | One HTTP client factory, and a bounded TLS escape hatch | Accepted | 2026-08-25 |
 | [0015](0015-drop-per-file-freshness-hash.md) | Drop the per-file freshness checksum | Accepted | 2026-08-25 |
 | [0016](0016-keep-only-the-episode-id-from-tv-compound-segments.md) | Keep only the episode id from the TV-episode compound segment | Accepted | 2026-08-25 |
+| [0017](0017-eager-work-queue-not-streamed.md) | Eagerly materialize the search work queue rather than stream it | Accepted | 2026-08-26 |
 
 ## Statuses
 
