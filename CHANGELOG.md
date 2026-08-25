@@ -158,6 +158,12 @@ below sit under `Unreleased`.
   payload=None`) so `results` stays a gapless ledger of every `chunk_index` for a file.
   Clean SIGINT handling: the current chunk finishes and commits before the run is marked
   `paused`.
+- `search run` now reports progress instead of going silent between the initial
+  `database opened` line and the final summary table: run creation/resume and queue size
+  at `INFO`, one line per file completed at `INFO`, and one line per chunk (submitted,
+  pre-filtered, or committed with its match/latency) at `DEBUG`. `ollama/client.py` logs
+  each call's latency at `DEBUG` and now logs a retry attempt at `WARNING` instead of
+  sleeping through the backoff with no visible cause.
 - `search/results.py`: `validate_output` re-checks a response against the manifest's
   schema and resolves `match_when`, independently of the `format` constraint already
   requested from Ollama (ADR-0013).

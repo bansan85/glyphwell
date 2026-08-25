@@ -22,12 +22,15 @@ import ollama
 from pydantic import TypeAdapter, ValidationError
 
 from glyphwell.errors import ModelOutputError, OllamaError
+from glyphwell.logging import get_logger
 from glyphwell.types import JsonObject, JsonValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = ["Completion", "LlmClient", "OllamaClient"]
+
+_log = get_logger(__name__)
 
 _JSON_OBJECT_ADAPTER: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
 
@@ -109,11 +112,13 @@ class OllamaClient:
         # schema".
         format_arg = dict(json_schema) if json_schema is not None else None
 
+        _log.debug("calling %s at %s (%d message(s))", model, self.host, len(messages))
         started = time.monotonic()
         response = self._chat_with_retries(
             model=model, messages=messages, options=options, format_arg=format_arg
         )
         latency_ms = round((time.monotonic() - started) * 1000)
+        _log.debug("%s responded in %dms", model, latency_ms)
 
         text = response.message.content or ""
         payload = _decode_json_payload(text) if json_schema is not None else None
@@ -150,6 +155,14 @@ class OllamaClient:
                 last_exc = exc
             if attempt < self.max_retries - 1:
                 backoff = _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+                _log.warning(
+                    "call to %s failed (attempt %d/%d), retrying in %.0fs: %s",
+                    model,
+                    attempt + 1,
+                    self.max_retries,
+                    backoff,
+                    last_exc,
+                )
                 time.sleep(backoff)
         message = f"Ollama call failed after {self.max_retries} attempt(s): {last_exc}"
         raise OllamaError(message) from last_exc
@@ -164,6 +177,7 @@ class OllamaClient:
         Raises:
             OllamaError: server unreachable or model not found.
         """
+        _log.debug("checking model %r is available on %s", model, self.host)
         try:
             _client(self.host, self.timeout).show(model)
         except ollama.ResponseError as exc:

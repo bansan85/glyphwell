@@ -81,6 +81,7 @@ def enqueue(conn: sqlite3.Connection, *, run_id: int, select: "SelectConfig") ->
     unresolved = int(conn.execute(unresolved_query, unresolved_params).fetchone()["n"])
     if unresolved:
         _log.warning("%d file(s) excluded from the queue: IMDb id not resolved", unresolved)
+    _log.info("%d new file(s) added to run %d's queue", added, run_id)
     return added
 
 

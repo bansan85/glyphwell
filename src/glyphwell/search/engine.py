@@ -89,6 +89,7 @@ class _FileState:
     """
 
     file_id: int
+    rel_path: str
     stream: IO[bytes]
     chunks: "Iterator[Chunk]"
     title: "Title | None"
@@ -130,10 +131,12 @@ class SearchEngine:
             SearchError: empty queue, or corpus not indexed.
             OllamaError: model unavailable — checked before scanning the corpus.
         """
+        _log.info("checking model %r is available", manifest.model)
         self.client.ensure_model(manifest.model)
         runs = RunsRepository(self.conn)
         existing = runs.find_by_hash(manifest.hash)
         if existing and existing[0].status is not RunStatus.DONE:
+            _log.info("manifest matches existing run %d, resuming it", existing[0].run_id)
             return self.resume(existing[0].run_id, limit=limit)
 
         run_id = runs.create(
@@ -142,6 +145,7 @@ class SearchEngine:
             manifest_snapshot=manifest.source,
             model=manifest.model,
         )
+        _log.info("created run %d for manifest %s", run_id, manifest.path)
         return self._run(run_id, manifest.manifest, limit=limit)
 
     def resume(self, run_id: int, *, limit: int | None = None) -> SearchOutcome:
@@ -160,6 +164,7 @@ class SearchEngine:
             raise SearchError(message)
 
         manifest = _manifest_from_run(self.conn, run_id)
+        _log.info("resuming run %d (%s)", run_id, manifest.name)
         self.client.ensure_model(manifest.model)
         return self._run(run_id, manifest, limit=limit)
 
@@ -218,6 +223,7 @@ class SearchEngine:
                     counters=counters,
                 )
             run_files.mark_done(run_id, file_id)
+            _log.info("file done: %s", state.rel_path)
         finally:
             for archive in archives.values():
                 archive.close()
@@ -235,17 +241,34 @@ class SearchEngine:
         """Shared driving logic for `start` and `resume`: enqueue, then process."""
         runs = RunsRepository(self.conn)
         runs.set_status(run_id, RunStatus.RUNNING)
+        _log.info("building the work queue (select filters)")
         planner.enqueue(self.conn, run_id=run_id, select=manifest.select)
 
-        _done, planned = planner.plan_size(self.conn, run_id)
+        done, planned = planner.plan_size(self.conn, run_id)
         if planned == 0:
             runs.set_status(run_id, RunStatus.FAILED)
             message = "no file in the corpus matches this manifest's select filters"
             raise SearchError(message)
+        _log.info(
+            "run %d: %d/%d file(s) already done, %d remaining",
+            run_id,
+            done,
+            planned,
+            planned - done,
+        )
 
         prefilter = Prefilter.compile(manifest.prefilter)
         outcome = self._process_queue(run_id, manifest, prefilter, limit=limit)
         runs.set_status(run_id, RunStatus.PAUSED if outcome.interrupted else RunStatus.DONE)
+        _log.info(
+            "run %d %s: %d file(s), %d chunk(s) done, %d skipped, %d match(es)",
+            run_id,
+            "paused" if outcome.interrupted else "done",
+            outcome.files_done,
+            outcome.chunks_done,
+            outcome.chunks_skipped,
+            outcome.matches,
+        )
         return outcome
 
     def _process_queue(
@@ -296,6 +319,7 @@ class SearchEngine:
                             run_files.mark_done(run_id, planned.file_id)
                             state.stream.close()
                             counters.files_done += 1
+                            _log.info("file done: %s", state.rel_path)
                             continue
                         future = executor.submit(
                             _complete_chunk, self.client, manifest, state, chunk
@@ -346,6 +370,7 @@ class SearchEngine:
                             run_files.mark_done(run_id, file_id)
                             state.stream.close()
                             counters.files_done += 1
+                            _log.info("file done: %s", state.rel_path)
                         else:
                             next_future = executor.submit(
                                 _complete_chunk, self.client, manifest, state, next_chunk
@@ -463,8 +488,20 @@ def _open_file(
         start_chunk_index=start_chunk_index,
     )
     title = titles.resolve(file_row.imdb_id)
+    _log.debug(
+        "opening %s (file %d): resuming at sentence %d, chunk %d",
+        file_row.rel_path,
+        file_id,
+        start_index,
+        start_chunk_index,
+    )
     return _FileState(
-        file_id=file_id, stream=stream, chunks=chunks, title=title, imdb_id=file_row.imdb_id
+        file_id=file_id,
+        rel_path=file_row.rel_path,
+        stream=stream,
+        chunks=chunks,
+        title=title,
+        imdb_id=file_row.imdb_id,
     )
 
 
@@ -497,6 +534,7 @@ def _next_evaluable_chunk(
                 latency_ms=None,
             )
             counters.chunks_skipped += 1
+            _log.debug("chunk %d of file %d: skipped by the pre-filter", chunk.index, file_id)
             continue
         return chunk
     return None
@@ -523,6 +561,7 @@ def _complete_chunk(
     A free function (not a method) so it can be handed to `ThreadPoolExecutor.submit`
     without capturing `self`.
     """
+    _log.debug("chunk %d of file %d: submitting to %s", chunk.index, state.file_id, manifest.model)
     context = render_context(chunk=chunk, title=state.title, imdb_id=state.imdb_id)
     system = None if manifest.prompt.system is None else render(manifest.prompt.system, context)
     user = render(manifest.prompt.user, context)
@@ -562,3 +601,10 @@ def _commit_completion(
     counters.chunks_done += 1
     if validated.matched:
         counters.matches += 1
+    _log.debug(
+        "chunk %d of file %d: %s (%dms)",
+        chunk.index,
+        file_id,
+        "matched" if validated.matched else "no match",
+        completion.latency_ms,
+    )
