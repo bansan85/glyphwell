@@ -267,8 +267,22 @@ breaking changes for users. They do change names that were already committed.
   recognizes the compound form and keeps the episode's own id, discarding the embedded
   series id/season/episode as a scrape-time copy of data the IMDb datasets already own
   (ADR-0016).
+- **`search run`'s work-queue construction generated one SQLite transaction per file and
+  blocked its own WAL checkpoint.** `enqueue_many`'s batched `INSERT OR IGNORE` calls ran
+  with no explicit transaction, so on the autocommit connection every file became its own
+  commit; the enclosing `SELECT` cursor also stayed open across all of them, and in WAL
+  mode an open reader pins the checkpoint to the point its snapshot began, so none of
+  those writes could ever be reclaimed either. On a real ~1.3M-file corpus this grew the
+  WAL to several times the size of the main database and slowed down every subsequent
+  read. `planner.enqueue` now paginates the matching query with keyset pagination on
+  `sf.file_id`, draining and closing each page's cursor before writing it in its own
+  explicit transaction. `SearchEngine` also no longer re-runs this scan on every resume —
+  only a freshly created run needs it, since a resume's queue was already fully populated
+  by the `start()` that created it. `db/connection.py` additionally raises the page cache
+  from SQLite's ~2 MB default to 256 MiB and checkpoints (`PRAGMA wal_checkpoint(TRUNCATE)`)
+  the WAL when a connection closes, so it no longer accumulates across invocations.
 
-All six defects are covered by regression tests.
+All seven defects are covered by regression tests.
 
 ### Public API
 

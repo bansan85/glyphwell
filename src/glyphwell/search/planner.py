@@ -29,7 +29,12 @@ __all__ = ["PlannedFile", "enqueue", "iter_work", "plan_size"]
 _log = get_logger(__name__)
 
 _ENQUEUE_BATCH_SIZE: Final = 5_000
-"""Files per `enqueue_many` call, to avoid one call carrying the whole corpus."""
+"""Files per page: one `SELECT` plus one `enqueue_many` transaction, to avoid one call
+carrying the whole corpus and to avoid holding a read cursor open across writes (see
+`enqueue`)."""
+
+_ENQUEUE_LOG_EVERY: Final = 10
+"""Pages between progress log lines, so a long first-time scan isn't silent."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -58,22 +63,42 @@ def enqueue(conn: sqlite3.Connection, *, run_id: int, select: "SelectConfig") ->
     identifier remains unresolved are discarded, and their count is logged — otherwise a
     corpus indexed without metadata would produce an empty queue with no explanation.
 
+    Paginates the matching query on `sf.file_id` (keyset pagination) instead of holding
+    one long-lived `SELECT` cursor open across every write: in WAL mode, an open reader
+    pins the checkpoint to the point its snapshot began, so a single call iterating a
+    live cursor for the whole corpus while interleaving writes would prevent any of its
+    own writes from ever being checkpointed. Each page is fully drained, then written in
+    its own explicit transaction — never one implicit transaction per row.
+
     Raises:
         DatabaseError: write failed.
     """
-    query, params = _matching_query(select)
     repo = RunFilesRepository(conn)
     added = 0
-    batch: list[int] = []
+    scanned = 0
+    pages = 0
+    after_id = 0
     try:
-        for row in conn.execute(query, params):
-            batch.append(int(row["file_id"]))
-            if len(batch) >= _ENQUEUE_BATCH_SIZE:
-                added += repo.enqueue_many(run_id, batch)
-                batch.clear()
-        if batch:
+        while True:
+            query, params = _matching_page_query(
+                select, after_id=after_id, limit=_ENQUEUE_BATCH_SIZE
+            )
+            batch = [int(row["file_id"]) for row in conn.execute(query, params)]
+            if not batch:
+                break
+            after_id = batch[-1]
+            scanned += len(batch)
+            conn.execute("BEGIN")
             added += repo.enqueue_many(run_id, batch)
+            conn.execute("COMMIT")
+            pages += 1
+            if pages % _ENQUEUE_LOG_EVERY == 0:
+                _log.info("enqueue: %d file(s) scanned, %d added so far", scanned, added)
+            if len(batch) < _ENQUEUE_BATCH_SIZE:
+                break
     except sqlite3.Error as exc:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         message = f"failed to enqueue files for run {run_id}: {exc}"
         raise DatabaseError(message) from exc
 
@@ -150,8 +175,14 @@ def _select_clauses(select: "SelectConfig") -> tuple[list[str], list[object]]:
     return clauses, params
 
 
-def _matching_query(select: "SelectConfig") -> tuple[str, list[object]]:
-    """Files whose title resolves and satisfies every filter."""
+def _matching_page_query(
+    select: "SelectConfig", *, after_id: int, limit: int
+) -> tuple[str, list[object]]:
+    """One page of files whose title resolves and satisfies every filter.
+
+    Keyset-paginated on `sf.file_id` (the table's own `INTEGER PRIMARY KEY`): cheap,
+    index-backed, and — unlike an `OFFSET` — its cost doesn't grow with the page number.
+    """
     clauses, params = _select_clauses(select)
     if select.title_types:
         clauses.append(f"t.title_type IN ({_placeholders(len(select.title_types))})")
@@ -162,10 +193,14 @@ def _matching_query(select: "SelectConfig") -> tuple[str, list[object]]:
     if select.years.max is not None:
         clauses.append("t.start_year <= ?")
         params.append(select.years.max)
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    clauses.append("sf.file_id > ?")
+    params.append(after_id)
+    where = f" WHERE {' AND '.join(clauses)}"
     query = (
-        f"SELECT sf.file_id FROM subtitle_files sf JOIN titles t ON t.imdb_id = sf.imdb_id{where}"
+        "SELECT sf.file_id FROM subtitle_files sf JOIN titles t ON t.imdb_id = sf.imdb_id"
+        f"{where} ORDER BY sf.file_id LIMIT ?"
     )
+    params.append(limit)
     return query, params
 
 

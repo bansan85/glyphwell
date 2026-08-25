@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import override
 
+import pytest
+
 from glyphwell.config import Settings
 from glyphwell.db import connect, initialize
 from glyphwell.db.repositories import (
@@ -22,6 +24,7 @@ from glyphwell.db.repositories import (
 from glyphwell.errors import OllamaError
 from glyphwell.manifest import load
 from glyphwell.ollama.client import Completion
+from glyphwell.search import planner
 from glyphwell.search.engine import SearchEngine
 from glyphwell.types import JsonValue
 
@@ -236,6 +239,38 @@ def test_request_stop_pauses_then_resume_finishes_the_file(tmp_path: Path) -> No
         run = RunsRepository(conn).get(paused.run_id)
         assert run is not None
         assert run.status is RunStatus.DONE
+
+
+def test_resume_does_not_rebuild_the_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resume must not repeat the corpus-wide enqueue scan: the queue already exists.
+
+    Only `start()`'s "fresh run" branch needs `planner.enqueue`; a resumed run's queue was
+    already fully populated by the `start()` that created it.
+    """
+    settings = Settings(data_dir=tmp_path / "data", _env_file=None)
+    settings.ensure_directories()
+    archive_path = _build_archive(tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+
+    with connect(settings.database_path, create=True) as conn:
+        initialize(conn)
+        _seed(settings, conn, archive_path)
+        stopping_client = _StoppingLlmClient()
+        engine = SearchEngine(conn=conn, client=stopping_client, settings=settings)
+        stopping_client.engine = engine
+        paused = engine.start(load(manifest_path))
+        assert paused.interrupted is True
+
+        def _fail(*_args: object, **_kwargs: object) -> int:
+            message = "resume() must not call planner.enqueue"
+            raise AssertionError(message)
+
+        monkeypatch.setattr(planner, "enqueue", _fail)
+        resuming_engine = SearchEngine(conn=conn, client=_FakeLlmClient(), settings=settings)
+        resumed = resuming_engine.resume(paused.run_id)
+
+        assert resumed.interrupted is False
+        assert resumed.chunks_done == 1
 
 
 def test_a_failing_file_is_marked_as_error_without_aborting_the_run(tmp_path: Path) -> None:

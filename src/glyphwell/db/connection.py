@@ -20,6 +20,10 @@ _log = get_logger(__name__)
 # 30 s: an IMDb dataset import holds the write lock for a while.
 _BUSY_TIMEOUT_MS = 30_000
 
+# 256 MiB: comfortably larger than a toy database, still modest next to `titles`
+# (multi-GB), but enough to keep the working set of a corpus-wide join in memory.
+_CACHE_SIZE_KIB = 262_144
+
 
 def open_connection(path: Path, *, create: bool = False) -> sqlite3.Connection:
     """Opens the database and applies the project's PRAGMAs.
@@ -51,6 +55,9 @@ def open_connection(path: Path, *, create: bool = False) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA temp_store = MEMORY")
+    # SQLite's own default (~2 MB) is negligible next to `titles`, which alone runs into
+    # the gigabytes: too small a cache turns point lookups into disk round-trips.
+    conn.execute(f"PRAGMA cache_size = -{_CACHE_SIZE_KIB}")
     _log.debug("database opened: %s", path)
     return conn
 
@@ -62,9 +69,18 @@ def connect(path: Path, *, create: bool = False) -> Iterator[sqlite3.Connection]
     `isolation_level=None` disables sqlite3's implicit autocommit: transactions are
     explicit (``BEGIN`` / ``COMMIT``), which the search engine's "one transaction per
     chunk" invariant requires.
+
+    Checkpoints and truncates the WAL before closing: WAL mode otherwise lets it grow
+    across invocations with nothing ever reclaiming it, since SQLite's own automatic
+    checkpoint only runs opportunistically and can be held back for as long as a reader
+    stays open.
     """
     conn = open_connection(path, create=create)
     try:
         yield conn
     finally:
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            _log.warning("could not checkpoint the WAL for %s", path)
         conn.close()

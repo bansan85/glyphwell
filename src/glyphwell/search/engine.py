@@ -146,7 +146,7 @@ class SearchEngine:
             model=manifest.model,
         )
         _log.info("created run %d for manifest %s", run_id, manifest.path)
-        return self._run(run_id, manifest.manifest, limit=limit)
+        return self._run(run_id, manifest.manifest, limit=limit, rebuild_queue=True)
 
     def resume(self, run_id: int, *, limit: int | None = None) -> SearchOutcome:
         """Resumes an interrupted search.
@@ -166,7 +166,7 @@ class SearchEngine:
         manifest = _manifest_from_run(self.conn, run_id)
         _log.info("resuming run %d (%s)", run_id, manifest.name)
         self.client.ensure_model(manifest.model)
-        return self._run(run_id, manifest, limit=limit)
+        return self._run(run_id, manifest, limit=limit, rebuild_queue=False)
 
     def process_file(self, run_id: int, file_id: int) -> int:
         """Processes a file from its cursor and returns the number of chunks committed.
@@ -237,12 +237,26 @@ class SearchEngine:
         """
         self._stop_event.set()
 
-    def _run(self, run_id: int, manifest: SearchManifest, *, limit: int | None) -> SearchOutcome:
-        """Shared driving logic for `start` and `resume`: enqueue, then process."""
+    def _run(
+        self,
+        run_id: int,
+        manifest: SearchManifest,
+        *,
+        limit: int | None,
+        rebuild_queue: bool,
+    ) -> SearchOutcome:
+        """Shared driving logic for `start` and `resume`: enqueue if needed, then process.
+
+        `rebuild_queue` is false on a resume: the queue was already fully populated by
+        the run's original `start()`, and re-running `planner.enqueue`'s corpus-wide join
+        on every resume would pay its full cost again for zero new rows. `start()` always
+        passes true, since a freshly created run has no queue yet.
+        """
         runs = RunsRepository(self.conn)
         runs.set_status(run_id, RunStatus.RUNNING)
-        _log.info("building the work queue (select filters)")
-        planner.enqueue(self.conn, run_id=run_id, select=manifest.select)
+        if rebuild_queue:
+            _log.info("building the work queue (select filters)")
+            planner.enqueue(self.conn, run_id=run_id, select=manifest.select)
 
         done, planned = planner.plan_size(self.conn, run_id)
         if planned == 0:
