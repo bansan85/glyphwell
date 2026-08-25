@@ -8,6 +8,12 @@ Related documents: [docs/adr/](docs/adr/) for the *reasoning* behind key decisio
 and the options that were ruled out, [CHANGELOG.md](CHANGELOG.md) for the delivered state and the
 public API. This file remains the entry point.
 
+Do not write an ADR for anything the `architecture-decision-records` skill's own "Skip
+ADR" table already excludes — bug fixes, minor version upgrades, implementation
+details, routine maintenance, configuration changes. Log those in CHANGELOG.md's
+`Fixed`/`Changed` section instead, with the *why*, and only escalate to an ADR when the
+change also introduces a new option that was weighed against alternatives.
+
 ## 1. Purpose
 
 Search the entirety of the OpenSubtitles subtitle corpus using a local LLM.
