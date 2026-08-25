@@ -26,13 +26,13 @@ from opustools import OpusGet
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from glyphwell.errors import CorpusError, MetadataError
+from glyphwell.http import make_client
 from glyphwell.logging import get_logger
 from glyphwell.types import LanguageCode, OpusVersion, Sha256
 
 __all__ = [
     "DEFAULT_CORPUS",
     "DEFAULT_PREPROCESSING",
-    "DEFAULT_TIMEOUT",
     "DEFAULT_VERSION",
     "CorpusDownload",
     "OpusFileRecord",
@@ -58,9 +58,6 @@ DEFAULT_CORPUS: Final = "OpenSubtitles"
 DEFAULT_VERSION: Final[OpusVersion] = "v2024"
 DEFAULT_PREPROCESSING: Final[Preprocessing] = "raw"
 """``raw`` keeps the text non-tokenized; ``xml`` splits it into ``<w>`` tags."""
-
-DEFAULT_TIMEOUT: Final = 60.0
-"""Timeout, in seconds, applied per block, not to the whole transfer."""
 
 _PART_SUFFIX: Final = ".part"
 _CHUNK_SIZE: Final = 1 << 20
@@ -119,18 +116,6 @@ class _OpusIndex(BaseModel):
     corpora: tuple[OpusFileRecord, ...]
 
 
-def _make_client(*, timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
-    """Default HTTP client.
-
-    `follow_redirects` is essential: the index returns an object storage URL that
-    redirects.
-    """
-    return httpx.Client(
-        follow_redirects=True,
-        timeout=httpx.Timeout(timeout, connect=timeout),
-    )
-
-
 def _opus_getter(
     *,
     corpus: str | None = None,
@@ -181,7 +166,7 @@ def _fetch_records(url: str, *, client: httpx.Client | None = None) -> tuple[Opu
         MetadataError: index unreachable, or response unreadable.
     """
     owned = client is None
-    http = client if client is not None else _make_client()
+    http = client if client is not None else make_client()
     try:
         response = http.get(url)
         response.raise_for_status()
@@ -382,7 +367,7 @@ def _stream_to_file(
         _log.info("resuming download at %d bytes: %s", resume_from, part.name)
 
     owned = client is None
-    http = client if client is not None else _make_client()
+    http = client if client is not None else make_client()
     digest = hashlib.sha256()
     hashed = True
 

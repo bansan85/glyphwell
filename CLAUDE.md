@@ -87,7 +87,7 @@ mypy is configured in **very strict mode** in `pyproject.toml`. Rules to keep in
   `tests/` alike, Typer decorators and pytest included. If a future dependency forces an
   override, scope it to that module and explain why here.
 
-Four pitfalls hit already, not to be reintroduced:
+Five pitfalls hit already, not to be reintroduced:
 
 - **PEP 695 and Typer.** Typer introspects annotations at runtime and can't unwrap a
   `TypeAliasType`. A `type X = Literal[...]` used in a command signature breaks the CLI's
@@ -110,6 +110,18 @@ Four pitfalls hit already, not to be reintroduced:
   the *same* instance: each one otherwise keeps its own cursor position. With two consoles,
   the smallest log line emitted during a download gets written right over the progress bar.
   `RichHandler()` with no argument grabs Rich's global console — that's exactly the trap.
+- **A single HTTP client factory.** [http.py](src/glyphwell/http.py)'s `make_client` is
+  the only place that builds an `httpx.Client`: `corpus/opus.py` and
+  `metadata/imdb_datasets.py` merely fall back on it when no client is injected, and each
+  CLI command that downloads opens exactly one, reused across the index lookup and the
+  transfer. Two things it encodes that are easy to get wrong: `follow_redirects=True` is
+  mandatory (the OPUS index hands back an object-storage URL that redirects), and `httpx`
+  verifies certificates against **certifi**, *not* the system trust store — so behind a
+  TLS-inspecting corporate proxy a download fails on a machine where `wget` and `curl`
+  work. `SSL_CERT_FILE` / `SSL_CERT_DIR` (honored by `httpx` via `trust_env`) is the fix
+  that keeps verification on; `GLYPHWELL_VERIFY_TLS=false` and the global
+  `--no-check-certificate` (`verify=False`, wget's spelling) are the last resort, and the
+  flag can only ever loosen the policy, never restore it.
 
 ## 6. Data sources and their pitfalls
 

@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Annotated, Final
 
+import httpx
 import typer
 from rich.filesize import decimal
 from rich.progress import (
@@ -46,6 +47,7 @@ from glyphwell.db.repositories import (
     SubtitleFilesRepository,
 )
 from glyphwell.errors import CorpusError, DatabaseError, GlyphwellError
+from glyphwell.http import make_client
 from glyphwell.logging import get_logger
 from glyphwell.types import Sha256
 
@@ -103,17 +105,22 @@ def fetch(
     target_language = language or settings.opus_language
     dest_dir = dest if dest is not None else settings.corpus_dir
 
-    record = resolve_archive(corpus=corpus_name, version=version, language=target_language)
-    _announce(record, dest_dir=dest_dir)
+    # A single client for the index lookup and the transfer that follows: same policy
+    # for both (`--no-check-certificate`), and one connection instead of two.
+    with make_client(verify=settings.verify_tls) as http:
+        record = resolve_archive(
+            corpus=corpus_name, version=version, language=target_language, client=http
+        )
+        _announce(record, dest_dir=dest_dir)
 
-    download_id = _upsert_pending(settings, record)
-    try:
-        result = _download(record, dest_dir=dest_dir, force=force)
-        summary = _verify(result.archive_path)
-        sha256 = _resolve_hash(result, compute_hash=compute_hash)
-    except GlyphwellError:
-        _mark(settings, download_id, DownloadStatus.FAILED)
-        raise
+        download_id = _upsert_pending(settings, record)
+        try:
+            result = _download(record, dest_dir=dest_dir, force=force, client=http)
+            summary = _verify(result.archive_path)
+            sha256 = _resolve_hash(result, compute_hash=compute_hash)
+        except GlyphwellError:
+            _mark(settings, download_id, DownloadStatus.FAILED)
+            raise
 
     _mark(
         settings,
@@ -137,7 +144,9 @@ def _announce(record: OpusFileRecord, *, dest_dir: Path) -> None:
     console.print(f"Destination: {dest_dir}")
 
 
-def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusDownload:
+def _download(
+    record: OpusFileRecord, *, dest_dir: Path, force: bool, client: httpx.Client
+) -> CorpusDownload:
     """Downloads the archive, showing volume, throughput and remaining time.
 
     The live display only starts on the first actual progress callback: when the
@@ -172,6 +181,7 @@ def _download(record: OpusFileRecord, *, dest_dir: Path, force: bool) -> CorpusD
             force=force,
             record=record,
             progress=on_progress,
+            client=client,
         )
     finally:
         if task is not None:

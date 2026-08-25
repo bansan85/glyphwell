@@ -18,6 +18,7 @@ from glyphwell.cli.context import get_context
 from glyphwell.console import console
 from glyphwell.db import connect, ensure_current
 from glyphwell.db.repositories import ImportRow, ImportSource, ImportsRepository
+from glyphwell.http import make_client
 from glyphwell.metadata.imdb_datasets import (
     ImdbDataset,
     ProgressCallback,
@@ -49,10 +50,13 @@ def fetch_imdb(
     """
     settings = get_context(ctx).settings
     settings.ensure_directories()
-    for dataset in ImdbDataset:
-        console.print(f"Downloading [bold]{dataset.url}[/bold]…")
-        path = download(dataset, dest_dir=settings.downloads_dir, force=force)
-        console.print(f"  -> {path}")
+    # One client for both datasets: same host, so the connection and its TLS handshake
+    # are reused — and the certificate policy (`--no-check-certificate`) is decided once.
+    with make_client(verify=settings.verify_tls) as http:
+        for dataset in ImdbDataset:
+            console.print(f"Downloading [bold]{dataset.url}[/bold]…")
+            path = download(dataset, dest_dir=settings.downloads_dir, force=force, client=http)
+            console.print(f"  -> {path}")
 
 
 @app.command("import-imdb")

@@ -209,6 +209,13 @@ actually offers; this is most often a release that doesn't exist for that langua
 Behind a corporate proxy, set `HTTPS_PROXY`. Nothing was downloaded, nothing needs
 cleaning up.
 
+**"[SSL: CERTIFICATE_VERIFY_FAILED] … unable to get local issuer certificate"** — a
+TLS-inspecting proxy sits in the way, and `httpx` verifies against certifi's bundle
+rather than the system store. Point it at the authority to trust
+(`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), or, as a last resort, drop
+verification with the global `glyphwell --no-check-certificate`. See
+[configuration.md](configuration.md#tls-certificates-behind-a-proxy).
+
 **"download interrupted … the file … is kept"** — the interruption occurred during the
 transfer. Rerun the same command: it will resume.
 

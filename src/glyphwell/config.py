@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     )
     opus_language: str = Field(default="en")
 
+    verify_tls: bool = Field(
+        default=True,
+        description=(
+            "Verify the TLS certificate of the servers downloaded from (OPUS, IMDb). "
+            "`false` is the equivalent of wget's --no-check-certificate, also reachable "
+            "as the global CLI option of that name. See `glyphwell.http`."
+        ),
+    )
+
     log_level: LogLevel = Field(default="INFO")
 
     @property

@@ -24,6 +24,7 @@ recorded here.
 | [0011](0011-drop-secondary-indexes-on-titles.md) | Drop the secondary indexes on `titles` | Accepted | 2026-08-25 |
 | [0012](0012-cross-file-concurrency-thread-confined-sqlite.md) | Cross-file concurrency with thread-confined SQLite access | Accepted | 2026-08-25 |
 | [0013](0013-revalidate-ollama-json-output-client-side.md) | Re-validate the model's JSON output client-side | Accepted | 2026-08-25 |
+| [0014](0014-one-http-client-factory-and-a-bounded-tls-escape-hatch.md) | One HTTP client factory, and a bounded TLS escape hatch | Accepted | 2026-08-25 |
 
 ## Statuses
 

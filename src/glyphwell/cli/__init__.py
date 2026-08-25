@@ -67,6 +67,17 @@ def root(
         LogLevel | None,
         typer.Option("--log-level", help="Logging verbosity."),
     ] = None,
+    no_check_certificate: Annotated[
+        bool,
+        typer.Option(
+            "--no-check-certificate",
+            help=(
+                "Do not verify the TLS certificate of the download servers (OPUS, IMDb)."
+                " Insecure: a last resort behind a TLS-inspecting proxy, where"
+                " SSL_CERT_FILE is the better answer."
+            ),
+        ),
+    ] = False,
     _version: Annotated[
         bool,
         typer.Option(
@@ -86,6 +97,10 @@ def root(
         data_dir=from_env.data_dir if data_dir is None else data_dir,
         database=from_env.database if database is None else database,
         log_level=from_env.log_level if log_level is None else log_level,
+        # The flag can only *disable* verification, never re-enable what
+        # `GLYPHWELL_VERIFY_TLS=false` already gave up on: unlike the options above, its
+        # absence is not "no opinion" but the secure default.
+        verify_tls=from_env.verify_tls and not no_check_certificate,
     )
 
     setup_logging(settings.log_level)

@@ -29,6 +29,7 @@ import httpx
 
 from glyphwell.db.repositories import EpisodeLink, TitleRow, TitlesRepository
 from glyphwell.errors import MetadataError
+from glyphwell.http import make_client
 from glyphwell.logging import get_logger
 
 __all__ = [
@@ -59,7 +60,6 @@ BASE_URL: Final = "https://datasets.imdbws.com/"
 NULL_MARKER: Final = r"\N"
 """Marker for a missing value in IMDb TSVs. Distinct from the empty string."""
 
-_TIMEOUT: Final = 60.0
 _CHUNK_SIZE: Final = 1 << 20
 _PART_SUFFIX: Final = ".part"
 
@@ -92,10 +92,6 @@ class ImdbDataset(StrEnum):
         return f"{BASE_URL}{self.value}"
 
 
-def _make_client() -> httpx.Client:
-    return httpx.Client(follow_redirects=True, timeout=httpx.Timeout(_TIMEOUT, connect=_TIMEOUT))
-
-
 def download(
     dataset: ImdbDataset,
     *,
@@ -125,7 +121,7 @@ def download(
 
     part = dest.with_name(dest.name + _PART_SUFFIX)
     owned = client is None
-    http = client if client is not None else _make_client()
+    http = client if client is not None else make_client()
     try:
         with http.stream("GET", dataset.url) as response:
             response.raise_for_status()
