@@ -75,7 +75,6 @@ def _file_row() -> SubtitleFileRow:
         opensubtitles_file_id="3660124",
         rel_path="OpenSubtitles/raw/en/1999/0133093/3660124.xml",
         year=1999,
-        sha256=None,
         size_bytes=None,
         sentence_count=None,
     )

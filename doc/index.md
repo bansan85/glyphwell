@@ -30,16 +30,15 @@ locally by Ollama.
 
 ## Progress status
 
-Steps 1 through 3 are operational; step 4 (resuming a run, and re-analysing a file after
-`corpus refresh`) is implemented for the resume-inside-a-file case, but `search resume`,
-`search status`, `search export`, and `corpus refresh` themselves are not yet wired up.
+Steps 1 through 3 are operational; step 4 (resuming a run) is implemented for the
+resume-inside-a-file case, but `search resume`, `search status`, and `search export`
+themselves are not yet wired up.
 
 | Capability | Status |
 |---|---|
 | `glyphwell db init` / `status` / `vacuum` | operational |
 | `glyphwell corpus fetch` | **operational** |
 | `glyphwell corpus index` | **operational** |
-| `glyphwell corpus refresh` | to implement |
 | `glyphwell metadata fetch-imdb` / `import-imdb` | **operational** |
 | `glyphwell search run` (including `--dry-run`) | **operational** |
 | `glyphwell search resume` / `status` / `export` | to implement |

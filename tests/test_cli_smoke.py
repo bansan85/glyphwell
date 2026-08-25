@@ -23,7 +23,6 @@ COMMANDS = (
     ("db", "vacuum"),
     ("corpus", "fetch"),
     ("corpus", "index"),
-    ("corpus", "refresh"),
     ("metadata", "fetch-imdb"),
     ("metadata", "import-imdb"),
     ("search", "run"),

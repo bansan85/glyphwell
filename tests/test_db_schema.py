@@ -62,6 +62,10 @@ def test_migration_from_v1_drops_secondary_titles_indexes() -> None:
         "CREATE INDEX idx_titles_parent ON titles (parent_imdb_id) WHERE parent_imdb_id IS NOT NULL"
     )
     conn.execute("CREATE INDEX idx_titles_type_year ON titles (title_type, start_year)")
+    # Version 3 also migrates from here: without these, the chained migration 2 -> 3
+    # would fail on a missing table before ever reaching the indexes under test.
+    conn.execute("CREATE TABLE subtitle_files (file_id INTEGER PRIMARY KEY, sha256 TEXT) STRICT")
+    conn.execute("CREATE TABLE run_files (run_id INTEGER, file_id INTEGER, file_sha256 TEXT)")
     conn.execute("PRAGMA user_version = 1")
 
     reached = initialize(conn)
@@ -71,6 +75,36 @@ def test_migration_from_v1_drops_secondary_titles_indexes() -> None:
     names = _index_names(conn)
     assert "idx_titles_parent" not in names
     assert "idx_titles_type_year" not in names
+    conn.close()
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {row["name"] for row in rows}
+
+
+def test_fresh_database_has_no_per_file_checksum_columns(db: sqlite3.Connection) -> None:
+    """A changed subtitle arrives under a new opensubtitles_file_id rather than mutating
+    an existing one (ADR-0015, supersedes ADR-0006): there is no column to compare."""
+    assert "sha256" not in _column_names(db, "subtitle_files")
+    assert "file_sha256" not in _column_names(db, "run_files")
+
+
+def test_migration_from_v2_drops_per_file_checksum_columns() -> None:
+    """A database created before ADR-0015 must end up without the per-file checksum
+    columns too, after `db init` runs the version-3 migration."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE subtitle_files (file_id INTEGER PRIMARY KEY, sha256 TEXT) STRICT")
+    conn.execute("CREATE TABLE run_files (run_id INTEGER, file_id INTEGER, file_sha256 TEXT)")
+    conn.execute("PRAGMA user_version = 2")
+
+    reached = initialize(conn)
+
+    assert reached == SCHEMA_VERSION
+    assert current_version(conn) == SCHEMA_VERSION
+    assert "sha256" not in _column_names(conn, "subtitle_files")
+    assert "file_sha256" not in _column_names(conn, "run_files")
     conn.close()
 
 

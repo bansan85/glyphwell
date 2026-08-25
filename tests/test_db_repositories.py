@@ -256,7 +256,6 @@ def _file_row(
         opensubtitles_file_id=opensubtitles_file_id,
         rel_path=rel_path,
         year=1999,
-        sha256=None,
         size_bytes=None,
         sentence_count=None,
     )
@@ -276,30 +275,6 @@ def test_subtitle_files_upsert_then_get_by_path(db: sqlite3.Connection) -> None:
     assert found.imdb_id == "tt0133093"
     assert repo.get(file_id) == found
     assert repo.count() == 1
-
-
-def test_subtitle_files_upsert_does_not_clobber_a_known_hash(db: sqlite3.Connection) -> None:
-    """A re-catalog pass (no content read) must not blank out a checksum already set."""
-    repo = SubtitleFilesRepository(db)
-    file_id = repo.upsert(_file_row())
-    repo.set_hash(file_id, "ab" * 32, size_bytes=1234)
-
-    repo.upsert(_file_row())  # simulates a second `corpus index` pass, sha256=None again
-
-    found = repo.get(file_id)
-    assert found is not None
-    assert found.sha256 == "ab" * 32
-    assert found.size_bytes == 1234
-
-
-def test_subtitle_files_iter_stale_only_returns_unhashed_rows(db: sqlite3.Connection) -> None:
-    repo = SubtitleFilesRepository(db)
-    hashed_id = repo.upsert(_file_row(opensubtitles_file_id="1", rel_path="a/1.xml"))
-    repo.set_hash(hashed_id, "cd" * 32, size_bytes=1)
-    stale_id = repo.upsert(_file_row(opensubtitles_file_id="2", rel_path="a/2.xml"))
-
-    stale = list(repo.iter_stale())
-    assert [row.file_id for row in stale] == [stale_id]
 
 
 def _run_id(conn: sqlite3.Connection, *, manifest_hash: str = "hash-a") -> int:
@@ -420,27 +395,6 @@ def test_run_files_mark_error_keeps_the_cursor(db: sqlite3.Connection) -> None:
     assert row.chunks_done == 1
 
 
-def test_run_files_reset_clears_cursor_across_runs(db: sqlite3.Connection) -> None:
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    run_a = _run_id(db, manifest_hash="hash-a")
-    run_b = _run_id(db, manifest_hash="hash-b")
-    repo = RunFilesRepository(db)
-    repo.enqueue_many(run_a, [file_id])
-    repo.enqueue_many(run_b, [file_id])
-    repo.advance(run_a, file_id, last_sentence_index=5, last_sentence_id="s5", chunks_done=1)
-    repo.mark_started(run_b, file_id)
-
-    affected = repo.reset(file_id)
-
-    assert affected == 2
-    for run_id in (run_a, run_b):
-        row = repo.get(run_id, file_id)
-        assert row is not None
-        assert row.status is FileStatus.PENDING
-        assert row.last_sentence_index is None
-        assert row.chunks_done == 0
-
-
 def test_run_files_advance_flips_pending_to_in_progress(db: sqlite3.Connection) -> None:
     run_id = _run_id(db)
     file_id = SubtitleFilesRepository(db).upsert(_file_row())
@@ -518,23 +472,6 @@ def test_results_payload_round_trips_through_json(db: sqlite3.Connection) -> Non
     matches = list(repo.iter_matches(run_id))
     assert len(matches) == 1
     assert matches[0].payload == {"matched": True, "n": 3}
-
-
-def test_results_delete_for_file_spans_every_run(db: sqlite3.Connection) -> None:
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    run_a = _run_id(db, manifest_hash="hash-a")
-    run_b = _run_id(db, manifest_hash="hash-b")
-    RunFilesRepository(db).enqueue_many(run_a, [file_id])
-    RunFilesRepository(db).enqueue_many(run_b, [file_id])
-    repo = ResultsRepository(db)
-    repo.insert_ignore(_result_row(run_id=run_a, file_id=file_id, chunk_index=0))
-    repo.insert_ignore(_result_row(run_id=run_b, file_id=file_id, chunk_index=0))
-
-    deleted = repo.delete_for_file(file_id)
-
-    assert deleted == 2
-    assert repo.count(run_a) == 0
-    assert repo.count(run_b) == 0
 
 
 def test_results_count_matched_only(db: sqlite3.Connection) -> None:

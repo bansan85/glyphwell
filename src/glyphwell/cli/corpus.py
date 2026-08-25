@@ -1,11 +1,9 @@
 """Subcommands ``glyphwell corpus``.
 
-STATUS: ``fetch`` and ``index`` are operational; ``refresh`` remains pending.
+STATUS: ``fetch`` and ``index`` are operational.
 """
 
-import hashlib
 import sqlite3
-from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -28,7 +26,7 @@ from glyphwell.cli.context import get_context
 from glyphwell.config import Settings
 from glyphwell.console import console
 from glyphwell.corpus.archive import ArchiveSummary, CorpusArchive
-from glyphwell.corpus.hashing import DEFAULT_CHUNK_SIZE, sha256_file
+from glyphwell.corpus.hashing import sha256_file
 from glyphwell.corpus.layout import CorpusEntry, iter_corpus
 from glyphwell.corpus.opus import (
     DEFAULT_CORPUS,
@@ -54,14 +52,14 @@ from glyphwell.types import Sha256
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Download, indexing and refreshing of the subtitle corpus.",
+    help="Download and indexing of the subtitle corpus.",
     no_args_is_help=True,
 )
 
 _log = get_logger(__name__)
 
 _CATALOG_BATCH_SIZE: Final = 2_000
-"""Files per cataloging/hashing transaction — bigger batches, fewer WAL commits."""
+"""Files per cataloging transaction — bigger batches, fewer WAL commits."""
 
 
 @app.command("fetch")
@@ -279,10 +277,6 @@ def _mark(
 @app.command("index")
 def index(
     ctx: typer.Context,
-    rehash: Annotated[
-        bool,
-        typer.Option("--rehash", help="Recomputes the checksum of files already cataloged."),
-    ] = False,
     language: Annotated[
         str | None,
         typer.Option("--language", "-l", help="Restricts the scan to a single language."),
@@ -290,8 +284,8 @@ def index(
 ) -> None:
     """Scans the archive and populates the `subtitle_files` table.
 
-    Does not read subtitle content: only the member name, its size and its checksum
-    are recorded. IMDb identifiers come from the internal layout.
+    Does not read subtitle content: only the member name is recorded. IMDb identifiers
+    come from the internal layout.
     """
     settings = get_context(ctx).settings
     target_language = language or settings.opus_language
@@ -307,7 +301,7 @@ def index(
 
         with CorpusArchive(archive_path) as archive:
             summary = archive.summarize()
-            _announce_index(archive_path, summary, rehash=rehash)
+            _announce_index(archive_path, summary)
 
             cataloged = _catalog(
                 conn,
@@ -316,24 +310,8 @@ def index(
                 language=target_language,
                 total=summary.subtitle_count,
             )
-            repo = SubtitleFilesRepository(conn)
-            if rehash:
-                hashed, skipped = _hash_files(
-                    conn,
-                    repo,
-                    archive,
-                    _iter_cataloged(
-                        repo, archive, opus_version=settings.opus_version, language=target_language
-                    ),
-                    total=summary.subtitle_count,
-                    description="rehashing",
-                )
-            else:
-                hashed, skipped = _hash_files(
-                    conn, repo, archive, repo.iter_stale(), total=None, description="hashing"
-                )
 
-    _report_index(summary=summary, cataloged=cataloged, hashed=hashed, skipped=skipped)
+    _report_index(summary=summary, cataloged=cataloged)
 
 
 def _require_downloaded_archive(download: CorpusDownloadRow | None, language: str) -> Path:
@@ -356,12 +334,10 @@ def _require_downloaded_archive(download: CorpusDownloadRow | None, language: st
     return Path(download.archive_path)
 
 
-def _announce_index(archive_path: Path, summary: ArchiveSummary, *, rehash: bool) -> None:
+def _announce_index(archive_path: Path, summary: ArchiveSummary) -> None:
     """Displays what is about to be scanned, before any write."""
     console.print(f"Archive: [bold]{archive_path}[/bold]")
     console.print(f"Subtitles found: {summary.subtitle_count:,}".replace(",", " "))
-    if rehash:
-        console.print("Recomputing checksums for every already-cataloged file (--rehash).")
 
 
 def _progress_bar() -> Progress:
@@ -427,7 +403,6 @@ def _flush_catalog(
                     opensubtitles_file_id=entry.opensubtitles_file_id,
                     rel_path=entry.rel_path,
                     year=entry.year,
-                    sha256=None,
                     size_bytes=None,
                     sentence_count=None,
                 )
@@ -440,106 +415,10 @@ def _flush_catalog(
     return len(batch)
 
 
-def _iter_cataloged(
-    repo: SubtitleFilesRepository,
-    archive: CorpusArchive,
-    *,
-    opus_version: str,
-    language: str,
-) -> Iterator[SubtitleFileRow]:
-    """Re-walks the archive and looks up each entry's already-cataloged row.
-
-    Cheap: only the central directory is read again, no decompression. Used by
-    ``--rehash`` to revisit every entry regardless of whether it already has a checksum.
-    """
-    for entry in iter_corpus(archive, language=language):
-        found = repo.get_by_path(
-            opus_version=opus_version, language=entry.language, rel_path=entry.rel_path
-        )
-        if found is not None:
-            yield found
-
-
-def _hash_member(archive: CorpusArchive, rel_path: str) -> tuple[Sha256, int]:
-    """Computes a member's checksum and byte size in a single pass over its stream."""
-    digest = hashlib.sha256()
-    size = 0
-    with archive.open_member(rel_path) as stream:
-        while chunk := stream.read(DEFAULT_CHUNK_SIZE):
-            digest.update(chunk)
-            size += len(chunk)
-    return digest.hexdigest(), size
-
-
-def _hash_files(
-    conn: sqlite3.Connection,
-    repo: SubtitleFilesRepository,
-    archive: CorpusArchive,
-    rows: Iterable[SubtitleFileRow],
-    *,
-    total: int | None,
-    description: str,
-) -> tuple[int, int]:
-    """Hashes a stream of already-cataloged rows, batching the writes.
-
-    Returns ``(hashed, skipped)``. An individual unreadable member is logged and skipped
-    rather than aborting a scan that can span hundreds of thousands of files.
-    """
-    hashed = 0
-    skipped = 0
-    with _progress_bar() as progress:
-        task = progress.add_task(description, total=total)
-        batch: list[SubtitleFileRow] = []
-        for row in rows:
-            batch.append(row)
-            if len(batch) >= _CATALOG_BATCH_SIZE:
-                batch_hashed, batch_skipped = _hash_batch(conn, repo, archive, batch)
-                hashed += batch_hashed
-                skipped += batch_skipped
-                progress.advance(task, len(batch))
-                batch.clear()
-        if batch:
-            batch_hashed, batch_skipped = _hash_batch(conn, repo, archive, batch)
-            hashed += batch_hashed
-            skipped += batch_skipped
-            progress.advance(task, len(batch))
-    return hashed, skipped
-
-
-def _hash_batch(
-    conn: sqlite3.Connection,
-    repo: SubtitleFilesRepository,
-    archive: CorpusArchive,
-    rows: list[SubtitleFileRow],
-) -> tuple[int, int]:
-    """Hashes and writes one batch in a single transaction."""
-    hashed = 0
-    skipped = 0
-    conn.execute("BEGIN")
-    try:
-        for row in rows:
-            try:
-                sha256, size = _hash_member(archive, row.rel_path)
-            except CorpusError as exc:
-                skipped += 1
-                _log.warning("could not hash %s: %s", row.rel_path, exc)
-                continue
-            repo.set_hash(row.file_id, sha256, size_bytes=size)
-            hashed += 1
-    except sqlite3.Error as exc:
-        conn.execute("ROLLBACK")
-        message = f"indexing failed while writing checksums: {exc}"
-        raise DatabaseError(message) from exc
-    conn.execute("COMMIT")
-    return hashed, skipped
-
-
 def _report_index(
     *,
     summary: ArchiveSummary,
     cataloged: int,
-    hashed: int,
-    skipped: int,
 ) -> None:
     """Summarizes the indexing pass."""
     table = Table(show_header=False, box=None)
@@ -547,9 +426,6 @@ def _report_index(
     table.add_column("Value")
     table.add_row("Subtitles in archive", f"{summary.subtitle_count:,}".replace(",", " "))
     table.add_row("Cataloged", f"{cataloged:,}".replace(",", " "))
-    table.add_row("Checksums computed", f"{hashed:,}".replace(",", " "))
-    if skipped:
-        table.add_row("Skipped (unreadable)", str(skipped))
     console.print(table)
 
     if summary.unexpected_count:
@@ -557,24 +433,3 @@ def _report_index(
             f"[yellow]Warning[/yellow]: {summary.unexpected_count} member(s) have an"
             f" unexpected extension, for example {summary.unexpected_samples[0]}."
         )
-
-
-@app.command("refresh")
-def refresh(
-    ctx: typer.Context,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run", help="Lists what would be invalidated, without writing anything."
-        ),
-    ] = False,
-) -> None:
-    """Detects modified subtitles and invalidates their results.
-
-    Recomputes the checksum of each cataloged file. If it differs, only that file's
-    results are deleted and its cursor reset in each search: the rest of the
-    searches are kept.
-    """
-    settings = get_context(ctx).settings
-    _ = (settings, dry_run)
-    raise NotImplementedError

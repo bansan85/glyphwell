@@ -135,7 +135,6 @@ class SubtitleFileRow:
     opensubtitles_file_id: OpenSubtitlesFileId
     rel_path: str
     year: int | None
-    sha256: Sha256 | None
     size_bytes: int | None
     sentence_count: int | None
 
@@ -161,7 +160,6 @@ class RunFileRow:
     run_id: int
     file_id: int
     status: FileStatus
-    file_sha256: Sha256 | None
     last_sentence_index: int | None
     last_sentence_id: str | None
     chunks_done: int
@@ -320,13 +318,12 @@ class SubtitleFilesRepository:
         cursor = self.conn.execute(
             "INSERT INTO subtitle_files"
             " (opus_version, language, imdb_id, opensubtitles_file_id, rel_path,"
-            "  year, sha256, size_bytes, sentence_count)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "  year, size_bytes, sentence_count)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (opus_version, language, rel_path) DO UPDATE SET"
             "     imdb_id = excluded.imdb_id,"
             "     opensubtitles_file_id = excluded.opensubtitles_file_id,"
             "     year = coalesce(excluded.year, subtitle_files.year),"
-            "     sha256 = coalesce(excluded.sha256, subtitle_files.sha256),"
             "     size_bytes = coalesce(excluded.size_bytes, subtitle_files.size_bytes),"
             "     sentence_count ="
             "         coalesce(excluded.sentence_count, subtitle_files.sentence_count),"
@@ -339,7 +336,6 @@ class SubtitleFilesRepository:
                 row.opensubtitles_file_id,
                 row.rel_path,
                 row.year,
-                row.sha256,
                 row.size_bytes,
                 row.sentence_count,
             ),
@@ -366,25 +362,6 @@ class SubtitleFilesRepository:
             (opus_version, language, rel_path),
         ).fetchone()
         return None if found is None else _to_subtitle_file_row(found)
-
-    def set_hash(self, file_id: int, sha256: Sha256, *, size_bytes: int) -> None:
-        """Records a file's checksum.
-
-        Unconditional overwrite: the caller just computed an authoritative, fresh
-        checksum, unlike `upsert`'s coalesced write.
-        """
-        self.conn.execute(
-            "UPDATE subtitle_files SET sha256 = ?, size_bytes = ?, updated_at = datetime('now')"
-            " WHERE file_id = ?",
-            (sha256, size_bytes, file_id),
-        )
-
-    def iter_stale(self) -> Iterator[SubtitleFileRow]:
-        """Files whose checksum is missing or stale, to be rehashed."""
-        for found in self.conn.execute(
-            "SELECT * FROM subtitle_files WHERE sha256 IS NULL ORDER BY file_id"
-        ):
-            yield _to_subtitle_file_row(found)
 
     def count(self) -> int:
         """Number of cataloged files."""
@@ -566,27 +543,6 @@ class RunFilesRepository:
             (last_sentence_index, last_sentence_id, chunks_done, run_id, file_id),
         )
 
-    def reset(self, file_id: int) -> int:
-        """Resets a file to `PENDING` across all searches and clears its cursor.
-
-        Called when the file's checksum has changed. Only touches this file: the rest of
-        each search is preserved. Also clears `error`/`started_at`, so a reset row is
-        indistinguishable from a freshly `enqueue_many`'d one.
-        """
-        cursor = self.conn.execute(
-            "UPDATE run_files SET"
-            "     status = 'pending',"
-            "     last_sentence_index = NULL,"
-            "     last_sentence_id = NULL,"
-            "     chunks_done = 0,"
-            "     error = NULL,"
-            "     started_at = NULL,"
-            "     updated_at = datetime('now')"
-            " WHERE file_id = ?",
-            (file_id,),
-        )
-        return cursor.rowcount
-
     def progress(self, run_id: int) -> dict[FileStatus, int]:
         """Counts files by status, for ``search status``.
 
@@ -633,14 +589,6 @@ class ResultsRepository:
             ),
         )
         return cursor.rowcount > 0
-
-    def delete_for_file(self, file_id: int) -> int:
-        """Deletes all results for a file, across every search.
-
-        Used for invalidation when the subtitle's content has changed.
-        """
-        cursor = self.conn.execute("DELETE FROM results WHERE file_id = ?", (file_id,))
-        return cursor.rowcount
 
     def iter_matches(self, run_id: int) -> Iterator[ResultRow]:
         """Positive results of a search, for export."""
@@ -830,7 +778,6 @@ def _to_subtitle_file_row(row: sqlite3.Row) -> SubtitleFileRow:
         opensubtitles_file_id=str(row["opensubtitles_file_id"]),
         rel_path=str(row["rel_path"]),
         year=None if row["year"] is None else int(row["year"]),
-        sha256=None if row["sha256"] is None else str(row["sha256"]),
         size_bytes=None if row["size_bytes"] is None else int(row["size_bytes"]),
         sentence_count=None if row["sentence_count"] is None else int(row["sentence_count"]),
     )
@@ -853,7 +800,6 @@ def _to_run_file_row(row: sqlite3.Row) -> RunFileRow:
         run_id=int(row["run_id"]),
         file_id=int(row["file_id"]),
         status=FileStatus(row["status"]),
-        file_sha256=None if row["file_sha256"] is None else str(row["file_sha256"]),
         last_sentence_index=(
             None if row["last_sentence_index"] is None else int(row["last_sentence_index"])
         ),

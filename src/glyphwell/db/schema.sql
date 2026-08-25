@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS subtitle_files (
     -- decompressed, this is the only key that allows opening the file.
     rel_path               TEXT NOT NULL,
     year                   INTEGER,             -- year carried by the OPUS directory tree
-    sha256                 TEXT,                -- NULL until the file has been hashed
     size_bytes             INTEGER,
     sentence_count         INTEGER,             -- NULL until the file has been read
     discovered_at          TEXT NOT NULL DEFAULT (datetime('now')),
@@ -58,6 +57,12 @@ CREATE TABLE IF NOT EXISTS subtitle_files (
     -- file's identity.
     UNIQUE (opus_version, language, rel_path)
 ) STRICT;
+
+-- Deliberately no per-file checksum here: a changed subtitle arrives under a new
+-- opensubtitles_file_id (a new row), it never mutates an existing one, and
+-- opus_version is already part of this table's identity. See ADR-0015, which
+-- supersedes ADR-0006. See db/migrations.py version 3 for the column drop on an
+-- existing database.
 
 CREATE INDEX IF NOT EXISTS idx_subtitle_files_imdb ON subtitle_files (imdb_id);
 CREATE INDEX IF NOT EXISTS idx_subtitle_files_scan
@@ -95,10 +100,6 @@ CREATE TABLE IF NOT EXISTS run_files (
                              REFERENCES subtitle_files (file_id) ON DELETE CASCADE,
     -- pending | in_progress | done | skipped | error
     status               TEXT NOT NULL DEFAULT 'pending',
-
-    -- sha256 of the file at the time it was queued. Used to detect that a newer version
-    -- of the subtitle has since appeared (see corpus refresh).
-    file_sha256          TEXT,
 
     -- Resume cursor. `last_sentence_index` is authoritative: position, in the file's
     -- sentence stream, of the last sentence covered by a chunk whose result has been

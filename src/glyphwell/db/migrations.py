@@ -17,7 +17,7 @@ __all__ = ["SCHEMA_VERSION", "current_version", "ensure_current", "initialize", 
 
 _log = get_logger(__name__)
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 """Schema version expected by this code."""
 
 # Migration steps to apply to go from version N-1 to version N.
@@ -30,6 +30,15 @@ _MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {
     2: (
         "DROP INDEX IF EXISTS idx_titles_parent",
         "DROP INDEX IF EXISTS idx_titles_type_year",
+    ),
+    # Drops the per-file freshness checksum: a changed subtitle arrives under a new
+    # opensubtitles_file_id rather than mutating an existing one, so the hash never
+    # caught anything real, and nothing ever populated `run_files.file_sha256` in the
+    # first place. `schema.sql` no longer creates either column; this brings an
+    # existing database in line. See ADR-0015 (supersedes ADR-0006).
+    3: (
+        "ALTER TABLE subtitle_files DROP COLUMN sha256",
+        "ALTER TABLE run_files DROP COLUMN file_sha256",
     ),
 }
 

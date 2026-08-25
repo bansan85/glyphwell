@@ -14,8 +14,9 @@ LLM-driven search across the entire OpenSubtitles subtitle corpus.
    filters, and the expected output schema. Each subtitle is split into sliding chunks
    of N sentences; each chunk yields one call to the model.
 4. **Resume** — state is persisted in SQLite at chunk granularity: an interrupted search
-   resumes at the current line, not at the start of the file. A subtitle whose content
-   changes (new OPUS release) has only its own results invalidated.
+   resumes at the current line, not at the start of the file. A subtitle that newly
+   appears in a later OPUS release is added as its own row and reaches an
+   already-running search on the next `corpus index` + rerun.
 
 ## Installation
 
@@ -81,7 +82,6 @@ uv run glyphwell db vacuum
 # Subtitle corpus
 uv run glyphwell corpus fetch --language en          # OPUS download
 uv run glyphwell corpus index                        # archive scan -> SQLite
-uv run glyphwell corpus refresh                      # re-hash + targeted invalidation
 
 # Title metadata
 uv run glyphwell metadata fetch-imdb                 # official IMDb datasets

@@ -158,7 +158,6 @@ def _seed(settings: Settings, conn: sqlite3.Connection, archive_path: Path) -> N
             opensubtitles_file_id="1",
             rel_path="OpenSubtitles/raw/en/1999/0133093/1.xml",
             year=1999,
-            sha256=None,
             size_bytes=None,
             sentence_count=None,
         )

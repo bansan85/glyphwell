@@ -57,7 +57,7 @@ def test_index_without_a_prior_fetch_fails_cleanly(tmp_path: Path) -> None:
     assert "fetch" in str(result.exception)
 
 
-def test_index_catalogs_and_hashes_every_subtitle(tmp_path: Path) -> None:
+def test_index_catalogs_every_subtitle(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     settings = Settings(data_dir=data_dir, _env_file=None)
     archive_path = tmp_path / "corpus.zip"
@@ -81,8 +81,6 @@ def test_index_catalogs_and_hashes_every_subtitle(tmp_path: Path) -> None:
         assert row is not None
         assert row.imdb_id == "tt0133093"
         assert row.year == 1999
-        assert row.sha256 is not None
-        assert row.size_bytes is not None
 
 
 def test_index_is_idempotent(tmp_path: Path) -> None:
@@ -99,39 +97,3 @@ def test_index_is_idempotent(tmp_path: Path) -> None:
 
     with connect(settings.database_path) as conn:
         assert SubtitleFilesRepository(conn).count() == 2
-
-
-def test_default_index_does_not_rehash_but_rehash_flag_does(tmp_path: Path) -> None:
-    data_dir = tmp_path / "data"
-    settings = Settings(data_dir=data_dir, _env_file=None)
-    archive_path = tmp_path / "corpus.zip"
-    _build_archive(archive_path)
-    rel_path = "OpenSubtitles/raw/en/1999/0133093/1.xml"
-
-    runner.invoke(app, ["--data-dir", str(data_dir), "db", "init"])
-    _seed_download(settings, archive_path)
-    runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
-
-    with connect(settings.database_path) as conn:
-        repo = SubtitleFilesRepository(conn)
-        row = repo.get_by_path(
-            opus_version=settings.opus_version, language=settings.opus_language, rel_path=rel_path
-        )
-        assert row is not None
-        repo.set_hash(row.file_id, "0" * 64, size_bytes=1)
-
-    runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
-    with connect(settings.database_path) as conn:
-        unchanged = SubtitleFilesRepository(conn).get_by_path(
-            opus_version=settings.opus_version, language=settings.opus_language, rel_path=rel_path
-        )
-        assert unchanged is not None
-        assert unchanged.sha256 == "0" * 64
-
-    runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index", "--rehash"])
-    with connect(settings.database_path) as conn:
-        fixed = SubtitleFilesRepository(conn).get_by_path(
-            opus_version=settings.opus_version, language=settings.opus_language, rel_path=rel_path
-        )
-        assert fixed is not None
-        assert fixed.sha256 != "0" * 64

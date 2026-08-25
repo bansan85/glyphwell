@@ -1,6 +1,6 @@
 # ADR-0006: Detect staleness with the pair (opus_version, sha256)
 
-**Status**: Accepted
+**Status**: Superseded by ADR-0015
 **Date**: 2026-08-24
 
 ## Context

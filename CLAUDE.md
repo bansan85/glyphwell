@@ -282,14 +282,16 @@ This is the core of the program's correctness. Any change to
 5. **Deterministic queue order** (`ORDER BY rel_path`) in
    [search/planner.py](src/glyphwell/search/planner.py): a resume walks the same sequence
    again, so `chunk_index` always designates the same chunk.
-6. **Freshness = `(opus_version, sha256)`.** `corpus refresh` recomputes the sha256; if it
-   differs, only the `results` for **that** file are deleted and its `run_files` row goes
-   back to `pending` with `last_sentence_id = NULL`. The rest of the run is kept.
-7. **The manifest hash identifies the search.** Editing the YAML changes
+6. **The manifest hash identifies the search.** Editing the YAML changes
    `runs.manifest_hash`: this creates a new run instead of mixing results produced by two
    different prompts. The YAML is archived in `runs.manifest_snapshot`.
-8. **Clean shutdown.** A SIGINT finishes the current chunk, commits, and marks the run
+7. **Clean shutdown.** A SIGINT finishes the current chunk, commits, and marks the run
    `paused` — it never leaves a file `in_progress` without a consistent cursor.
+
+There is deliberately no per-file freshness check here: a changed subtitle arrives under
+a new `opensubtitles_file_id` (a new `subtitle_files` row) rather than mutating an
+existing one, and `opus_version` is already part of that row's identity. See ADR-0015,
+which supersedes ADR-0006.
 
 ## 8. Data model
 
@@ -300,7 +302,7 @@ only the catalog and progress state live there. Schema declared in
 | Table | Role |
 |---|---|
 | `titles` | IMDb titles: type, title, year, episode-to-series link. |
-| `subtitle_files` | One archive member: member name, imdb_id, sha256, OPUS version. |
+| `subtitle_files` | One archive member: member name, imdb_id, OPUS version. |
 | `runs` | One search run: manifest, its hash, its snapshot, model, status. |
 | `run_files` | Work queue and per-file **resume point** (`last_sentence_id`). |
 | `results` | One model response per chunk, with its sentence range. |
@@ -329,9 +331,9 @@ archive reading without extraction
 **Also operational, since the search feature landed**:
 
 - `glyphwell corpus index` ([cli/corpus.py](src/glyphwell/cli/corpus.py)): walks the
-  archive via [corpus/layout.py](src/glyphwell/corpus/layout.py)'s `iter_corpus`,
-  populates `subtitle_files` (`SubtitleFilesRepository`), and hashes each member
-  (`--rehash` to force recomputing an already-known checksum).
+  archive via [corpus/layout.py](src/glyphwell/corpus/layout.py)'s `iter_corpus` and
+  populates `subtitle_files` (`SubtitleFilesRepository`) — a pure catalog from member
+  names, no content read (see ADR-0015).
 - Streaming subtitle reading and chunking:
   [corpus/reader.py](src/glyphwell/corpus/reader.py) (`iter_sentences`/`count_sentences`,
   reading the `IO[bytes]` stream from `CorpusArchive.open_member`, never a `Path`) and
@@ -366,7 +368,6 @@ search feature above, since nothing else depends on them yet:
 |---|---|
 | [search/results.py](src/glyphwell/search/results.py) | `export_run`, `summary` |
 | [cli/search.py](src/glyphwell/cli/search.py) | `resume`, `status`, `export` commands |
-| [cli/corpus.py](src/glyphwell/cli/corpus.py) | `refresh` command |
 
 Two decisions that shaped the search implementation, worth knowing before touching it
 again:

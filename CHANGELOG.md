@@ -214,6 +214,19 @@ breaking changes for users. They do change names that were already committed.
   `extracted_at` column. Nothing is extracted any more (ADR-0008).
 - `OpusRead`, `get_files` and `get_corpora_data` from the `opustools` stub: no caller left,
   and the declared signatures of the last two were wrong.
+- **The per-file freshness checksum** (ADR-0006, superseded by ADR-0015):
+  `subtitle_files.sha256`, `run_files.file_sha256`, `corpus index --rehash`, the now-empty
+  `corpus refresh` stub, and the repository methods that only served them
+  (`SubtitleFilesRepository.set_hash`/`iter_stale`, `RunFilesRepository.reset`,
+  `ResultsRepository.delete_for_file`). `opus_version` already makes a new OPUS release a
+  new `subtitle_files` row, and a changed subtitle arrives under a new
+  `opensubtitles_file_id` rather than mutating an existing one, so the checksum never
+  caught anything real; nothing had wired `run_files.file_sha256` or called the other two
+  repository methods in the first place. `corpus index` no longer reads any subtitle
+  content — pure central-directory cataloging. `db/schema.sql` drops both columns;
+  `db/migrations.py` version 3 does the same on an existing database. The archive-download
+  checksum (`corpus_downloads.sha256`, `corpus fetch --hash`) and the manifest hash
+  (`runs.manifest_hash`) are untouched — unrelated concepts.
 
 ### Fixed
 
@@ -283,22 +296,22 @@ takes an open `CorpusArchive` rather than a directory root.
 glyphwell [--version] [--data-dir] [--database] [--log-level]
 glyphwell db        init | status | vacuum
 glyphwell corpus    fetch [--language --version --corpus --dest --force --hash]
-                    index [--rehash --language] | refresh
+                    index [--language]
 glyphwell metadata  fetch-imdb [--force] | import-imdb [--source-dir]
 glyphwell search    run [--limit --concurrency --dry-run] | resume | status | export
 ```
 
 ### Known limitations
 
-- 6 call sites across 3 modules raise `NotImplementedError` (down from 56 across 13, itself
-  down from 68 across 16). Signatures, dataclasses and protocols are complete and
-  typecheck under strict mypy, but the bodies are not written. Fully working at this
+- 5 call sites across 2 modules raise `NotImplementedError` (down from 6 across 3, itself
+  down from 56 across 13, itself down from 68 across 16 — `corpus refresh` is gone rather
+  than staying a stub, see ADR-0015). Signatures, dataclasses and protocols are complete
+  and typecheck under strict mypy, but the bodies are not written. Fully working at this
   point: `db init`, `db status`, `db vacuum`, `corpus fetch`, `corpus index`,
   `metadata fetch-imdb`, `metadata import-imdb`, `search run` (including `--dry-run`),
   manifest loading/validation/hashing, sha256 computation, configuration and logging.
-- `corpus refresh` and `search resume`/`status`/`export` still raise: revisiting a file
-  whose content changed (ADR-0006) and everything downstream of a finished run
-  (`search/results.py`'s `export_run` and `summary`) remain out of scope. Every
+- `search resume`/`status`/`export` still raise: everything downstream of a finished run
+  (`search/results.py`'s `export_run` and `summary`) remains out of scope. Every
   repository in `db/repositories.py` is now implemented.
 - **`SelectConfig.title_types`/`years` filtering is live without the index ADR-0011 said
   it would need.** `search/planner.py::_matching_query` now joins `subtitle_files` to
@@ -369,7 +382,8 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0003 — use the official IMDb datasets as the sole metadata source
 - ADR-0004 — define a search with a hashed YAML manifest
 - ADR-0005 — analyse sliding windows of sentences and resume inside a file
-- ADR-0006 — detect staleness with the pair `(opus_version, sha256)`
+- ADR-0006 — detect staleness with the pair `(opus_version, sha256)` (superseded by
+  ADR-0015)
 - ADR-0007 — enforce very strict typing with no escape hatches
 - ADR-0008 — never extract the corpus archive
 - ADR-0009 — use opustools as the OPUS index only, and httpx for the transfer
@@ -377,3 +391,5 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0011 — drop the secondary indexes on `titles`
 - ADR-0012 — cross-file concurrency with thread-confined SQLite access
 - ADR-0013 — re-validate the model's JSON output client-side
+- ADR-0014 - one http client factory and a bounded TLS escape hatch
+- ADR-0015 — drop the per-file freshness checksum

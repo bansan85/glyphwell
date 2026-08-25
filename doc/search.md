@@ -51,19 +51,19 @@ costing a model call, not the manifest's prompt.
 
 ## Cataloguing the corpus (`corpus index`)
 
-`corpus index` walks the archive's members via `corpus/layout.py::iter_corpus`, populates
-`subtitle_files` (one row per member: language, IMDb id, OPUS version), and hashes each
-one (`sha256_stream`, since a member is read straight out of the zip and never touches
-disk on its own). Members that don't match the expected layout are skipped and counted,
-not fatal to the whole scan.
+`corpus index` walks the archive's members via `corpus/layout.py::iter_corpus` and
+populates `subtitle_files` (one row per member: language, IMDb id, OPUS version) — a pure
+catalog from member names, reading only the central directory, never a member's content.
+Members that don't match the expected layout are skipped and counted, not fatal to the
+whole scan.
 
 | Option | Effect |
 |---|---|
-| `--rehash` | Recomputes the checksum of files already catalogued. |
 | `--language`, `-l` | Restricts the scan to a single language. |
 
-Rerun it after a new `corpus fetch` to catalogue an additional release or language; already
-catalogued members are left alone unless `--rehash` is passed.
+Rerun it after a new `corpus fetch` to catalogue an additional release or language;
+already catalogued members are left alone, and a newly appeared subtitle file (a new
+`opensubtitles_file_id`) is added as its own row (see ADR-0015).
 
 ## The manifest
 
@@ -115,9 +115,9 @@ Sentences stream past a fixed-stride sliding window (`chunk.size`, `chunk.overla
 model call per window, one SQLite transaction per call, writing the result and the resume
 cursor together (ADR-0005). Interrupting a run — `Ctrl-C`, a crash, a restart — never
 costs more than the one chunk in flight when it happened; rerunning the same manifest
-picks the queue back up exactly where it left off. `corpus refresh` (not yet implemented)
-will apply the same per-file invalidation on top of a changed checksum (ADR-0006), without
-discarding the rest of the run.
+picks the queue back up exactly where it left off. A subtitle file that newly appears in
+the corpus (a new `opensubtitles_file_id`) reaches an already-running search the same
+way: rerun `corpus index`, then the manifest (ADR-0015).
 
 ## Concurrency
 
@@ -146,6 +146,6 @@ often.
 
 ## What's next
 
-`search resume`, `search status`, `search export`, and `corpus refresh` are wired into the
-CLI and typecheck, but their bodies are not written yet — see the changelog's *Known
+`search resume`, `search status`, and `search export` are wired into the CLI and
+typecheck, but their bodies are not written yet — see the changelog's *Known
 limitations*.
