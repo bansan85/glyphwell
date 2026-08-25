@@ -88,6 +88,11 @@ class OllamaClient:
     host: str = "http://localhost:11434"
     timeout: float = 300.0
     max_retries: int = 3
+    # A reasoning-capable model (e.g. Qwen3) puts its reasoning in `message.thinking`,
+    # separate from `message.content`, which `complete` reads. With reasoning left on,
+    # `num_predict` can be exhausted before the model ever emits content, leaving
+    # `complete` with an empty string to parse as JSON — off by default for that reason.
+    think: bool = False
 
     def complete(
         self,
@@ -144,7 +149,11 @@ class OllamaClient:
         for attempt in range(self.max_retries):
             try:
                 return client.chat(
-                    model=model, messages=messages, options=options, format=format_arg
+                    model=model,
+                    messages=messages,
+                    options=options,
+                    format=format_arg,
+                    think=self.think,
                 )
             except ollama.ResponseError as exc:
                 if not (exc.status_code >= 500 or exc.status_code < 0):

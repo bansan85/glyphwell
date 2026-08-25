@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     ollama_timeout: float = Field(default=300.0, gt=0)
 
     concurrency: int = Field(
-        default=4,
+        default=1,
         ge=1,
         le=64,
         description="Number of chunks analyzed in parallel by a search.",

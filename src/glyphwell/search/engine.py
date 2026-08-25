@@ -203,6 +203,13 @@ class SearchEngine:
                     completion = _complete_chunk(self.client, manifest, state, chunk)
                 except OllamaError as exc:
                     run_files.mark_error(run_id, file_id, str(exc))
+                    _log.warning(
+                        "chunk %d of file %d (%s) failed, file marked error: %s",
+                        chunk.index,
+                        file_id,
+                        state.rel_path,
+                        exc,
+                    )
                     return counters.chunks_done + counters.chunks_skipped
                 _commit_completion(
                     self.conn,
@@ -353,6 +360,13 @@ class SearchEngine:
                             completion = future.result()
                         except OllamaError as exc:
                             run_files.mark_error(run_id, file_id, str(exc))
+                            _log.warning(
+                                "chunk %d of file %d (%s) failed, file marked error: %s",
+                                chunk.index,
+                                file_id,
+                                state.rel_path,
+                                exc,
+                            )
                             state.stream.close()
                             counters.files_done += 1
                             continue
