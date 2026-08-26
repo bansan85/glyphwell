@@ -27,7 +27,7 @@ model: fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b
 options:
   temperature: 0
   num_ctx: 24576
-  num_predict: 1000
+  num_predict: 2000
 
 # --------------------------------------------------------------------------------------
 # Which subtitles to analyze
@@ -43,7 +43,7 @@ select:
     max: null
   # null or an explicit list of bare numeric ids: [133093]. A series id expands to
   # every one of its episodes (matched via the IMDb datasets' parent-title link).
-  imdb_ids: null
+  imdb_ids: [7335184]
   # OpenSubtitles often carries several independent translations for the same
   # (imdb_id, language). true (the default) keeps only the one most likely to carry the
   # fullest legitimate dialogue transcript, cutting redundant Ollama calls (ADR-0020).
@@ -162,13 +162,17 @@ output:
               const: true
         then:
           required: [findings]
+          properties:
+            findings:
+              minItems: 1
       - if:
           properties:
             matched:
               const: false
         then:
-          not:
-            required: [findings]
+          properties:
+            findings:
+              maxItems: 0
 
 # Boolean field of the response that feeds the `results.matched` column, and therefore
 # what `glyphwell search export` keeps by default. `null`: every produced result counts
