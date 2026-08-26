@@ -606,7 +606,7 @@ def _complete_chunk(
     A free function (not a method) so it can be handed to `ThreadPoolExecutor.submit`
     without capturing `self`.
     """
-    _log.debug("chunk %d of file %d: submitting to %s", chunk.index, state.file_id, manifest.model)
+    _log.debug("chunk %d of file %d", chunk.index, state.file_id)
     context = render_context(chunk=chunk, title=state.title, imdb_id=state.imdb_id)
     system = None if manifest.prompt.system is None else render(manifest.prompt.system, context)
     user = render(manifest.prompt.user, context)
@@ -630,8 +630,12 @@ def _commit_completion(
     counters: _Counters,
 ) -> None:
     """Validates a model response and commits it, updating the running counters."""
+    lines_by_id = {sentence.id: sentence.text for sentence in chunk.sentences}
     validated = validate_output(
-        completion.text, output=manifest.output, match_when=manifest.match_when
+        completion.text,
+        output=manifest.output,
+        match_when=manifest.match_when,
+        lines_by_id=lines_by_id,
     )
     commit_chunk(
         run_conn,
@@ -646,10 +650,17 @@ def _commit_completion(
     counters.chunks_done += 1
     if validated.matched:
         counters.matches += 1
-    _log.debug(
-        "chunk %d of file %d: %s (%dms)",
-        chunk.index,
-        file_id,
-        "matched" if validated.matched else "no match",
-        completion.latency_ms,
-    )
+        _log.debug(
+            "chunk %d of file %d: matched (%dms): %s",
+            chunk.index,
+            file_id,
+            completion.latency_ms,
+            validated.payload,
+        )
+    else:
+        _log.debug(
+            "chunk %d of file %d: no match (%dms)",
+            chunk.index,
+            file_id,
+            completion.latency_ms,
+        )

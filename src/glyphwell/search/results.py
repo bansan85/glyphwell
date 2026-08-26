@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from glyphwell.manifest.model import OutputConfig
     from glyphwell.metadata.resolver import TitleProvider
+    from glyphwell.types import JsonValue, SentenceId
 
 _JSON_OBJECT_ADAPTER: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
 
@@ -52,20 +53,32 @@ class ValidatedOutput:
     matched: bool
 
 
-def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None) -> ValidatedOutput:
+def validate_output(
+    raw: str,
+    *,
+    output: "OutputConfig",
+    match_when: str | None,
+    lines_by_id: "Mapping[SentenceId, str] | None" = None,
+) -> ValidatedOutput:
     """Decodes and validates the model's raw response.
 
     Args:
         raw: text returned by the model.
         output: manifest output configuration.
         match_when: name of the boolean field determining the match.
+        lines_by_id: the chunk's own sentences, keyed by id. Wherever the response nests
+            an ``excerpt_ids`` array, the sibling ``excerpt`` field is rebuilt from these
+            lines (joined with ``\\n``) rather than trusted from the model: citing ids it
+            already read is a far smaller generation than reproducing their text
+            verbatim, and rebuilding it here guarantees an exact quote.
 
     Returns:
         The validated response.
 
     Raises:
-        ModelOutputError: unreadable JSON, non-conforming to the schema, or `match_when`
-            field missing or not boolean.
+        ModelOutputError: unreadable JSON, non-conforming to the schema, `match_when`
+            field missing or not boolean, or an `excerpt_ids` entry that is not an
+            integer or does not cite a line of the chunk.
     """
     if output.format == "text":
         # `SearchManifest` forbids `match_when` together with `format = text`: nothing
@@ -85,6 +98,8 @@ def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None)
             message = f"response does not conform to output.schema: {exc.message}"
             raise ModelOutputError(message) from exc
 
+    payload = _reconstruct_excerpts(payload, lines_by_id=lines_by_id or {})
+
     if match_when is None:
         return ValidatedOutput(payload=payload, matched=True)
     if match_when not in payload:
@@ -95,6 +110,49 @@ def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None)
         message = f"match_when field {match_when!r} is not a boolean: {matched!r}"
         raise ModelOutputError(message)
     return ValidatedOutput(payload=payload, matched=matched)
+
+
+def _reconstruct_excerpts(
+    payload: JsonObject, *, lines_by_id: "Mapping[SentenceId, str]"
+) -> JsonObject:
+    """Rebuilds every ``excerpt`` field nested anywhere in `payload` from its sibling
+    ``excerpt_ids``, discarding whatever the model returned there.
+    """
+    rebuilt: JsonObject = {
+        key: _rebuild_excerpts(item, lines_by_id=lines_by_id) for key, item in payload.items()
+    }
+    if "excerpt_ids" in rebuilt:
+        rebuilt["excerpt"] = _join_cited_lines(rebuilt["excerpt_ids"], lines_by_id=lines_by_id)
+    return rebuilt
+
+
+def _rebuild_excerpts(
+    value: "JsonValue", *, lines_by_id: "Mapping[SentenceId, str]"
+) -> "JsonValue":
+    """Recursive worker for `_reconstruct_excerpts`, applied to a single nested value."""
+    if isinstance(value, list):
+        return [_rebuild_excerpts(item, lines_by_id=lines_by_id) for item in value]
+    if isinstance(value, dict):
+        return _reconstruct_excerpts(value, lines_by_id=lines_by_id)
+    return value
+
+
+def _join_cited_lines(ids: "JsonValue", *, lines_by_id: "Mapping[SentenceId, str]") -> str:
+    """Joins the text of every sentence cited by an ``excerpt_ids`` array, in order."""
+    if not isinstance(ids, list):
+        message = f"excerpt_ids is not an array: {ids!r}"
+        raise ModelOutputError(message)
+    lines: list[str] = []
+    for entry in ids:
+        if not isinstance(entry, int) or isinstance(entry, bool):
+            message = f"excerpt_ids entry is not an integer: {entry!r}"
+            raise ModelOutputError(message)
+        line = lines_by_id.get(str(entry))
+        if line is None:
+            message = f"excerpt_ids cites line {entry}, which is not part of the excerpt"
+            raise ModelOutputError(message)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def export_run(

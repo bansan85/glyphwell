@@ -191,7 +191,13 @@ below sit under `Unreleased`.
   sleeping through the backoff with no visible cause.
 - `search/results.py`: `validate_output` re-checks a response against the manifest's
   schema and resolves `match_when`, independently of the `format` constraint already
-  requested from Ollama (ADR-0013).
+  requested from Ollama (ADR-0013). Wherever the response nests an `excerpt_ids` field
+  (an array of cited sentence ids), `validate_output` now reconstructs the sibling
+  `excerpt` field itself from the chunk's own sentence text (joined with `\n`) instead of
+  trusting the model to reproduce it verbatim, raising `ModelOutputError` if an id does
+  not refer to a line of the chunk. A citation-heavy schema, like the `findings` array in
+  `searches/example.yaml`, no longer has to ask the model to generate `excerpt` at all,
+  cutting how much it must generate per finding.
 - `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, and
   `ResultsRepository` (`db/repositories.py`) are now implemented, alongside two additions
   the engine needed beyond the original stub signatures: `SubtitleFilesRepository.get`

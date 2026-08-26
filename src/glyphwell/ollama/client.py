@@ -117,13 +117,11 @@ class OllamaClient:
         # schema".
         format_arg = dict(json_schema) if json_schema is not None else None
 
-        _log.debug("calling %s at %s (%d message(s))", model, self.host, len(messages))
         started = time.monotonic()
         response = self._chat_with_retries(
             model=model, messages=messages, options=options, format_arg=format_arg
         )
         latency_ms = round((time.monotonic() - started) * 1000)
-        _log.debug("%s responded in %dms", model, latency_ms)
 
         text = response.message.content or ""
         payload = _decode_json_payload(text) if json_schema is not None else None

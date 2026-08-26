@@ -103,6 +103,17 @@ Editing any of this changes the manifest's SHA-256, which is its identity: a sea
 already in progress keeps its results, and an edited manifest starts a fresh run instead
 of mixing answers produced by two different prompts (ADR-0004).
 
+### Citing lines instead of quoting them
+
+Wherever `output.schema` nests a field named `excerpt_ids` (an array of the cited
+sentence ids — see `findings` in `searches/example.yaml`), glyphwell reconstructs a
+sibling `excerpt` field itself from the chunk's own text (the cited lines, joined with
+`\n`) instead of asking the model to reproduce them verbatim. Drop `excerpt` from that
+object's `properties`/`required` entirely: citing ids it already has in context is a much
+smaller generation than an exact quote, and reconstructing it locally guarantees the
+quote is exact. An id that doesn't refer to a line of the chunk is rejected the same way
+as any other schema violation (`ModelOutputError`).
+
 ### Choosing a model
 
 Nothing about the manifest format requires an "aligned" instruct model — `options` and
@@ -179,9 +190,10 @@ has not run yet, or `select` (language, title type, year, ids) matches nothing. 
 filters or run `corpus index` first.
 
 **A model response is rejected (`ModelOutputError`)** — the response did not conform to
-`output.schema` even though it was requested from Ollama (ADR-0013). That file is marked
-in error and the rest of the run continues; see *Choosing a model* above if this happens
-often.
+`output.schema` even though it was requested from Ollama (ADR-0013), or, for a schema
+using the `excerpt_ids` convention (*Citing lines instead of quoting them* above), an id
+did not refer to a line of the chunk. That file is marked in error and the rest of the
+run continues; see *Choosing a model* above if this happens often.
 
 ## What's next
 

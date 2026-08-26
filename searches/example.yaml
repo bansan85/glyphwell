@@ -148,12 +148,8 @@ output:
             method_description:
               type: string
               description: Concise summary in English of the specific concealment technique used or described.
-            excerpt:
-              type: string
-              description: Exact quoted subtitle text only, copied verbatim from the cited lines.
           required:
             - excerpt_ids
-            - excerpt
             - concealment_category
             - method_description
           additionalProperties: false
