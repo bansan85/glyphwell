@@ -92,7 +92,7 @@ top-level sections:
 | Section | Purpose |
 |---|---|
 | `model`, `options` | Ollama model tag and generation options (`temperature`, `num_ctx`, `num_predict`, ...), passed through as-is. |
-| `select` | Which subtitles to analyze: language, IMDb title type, year range, or an explicit id list (a series id expands to all of its episodes). Requires the IMDb datasets to be imported for anything beyond language. |
+| `select` | Which subtitles to analyze: language, IMDb title type, year range, an explicit id list (a series id expands to all of its episodes), and whether to keep every translation of a title or only its most complete one (`one_subtitle_per_title`, on by default — see *Deduplicating translations* below). Requires the IMDb datasets to be imported for anything beyond language. |
 | `chunk` | `size`/`overlap`, in sentences — the unit of both a model call and the resume cursor. |
 | `prefilter` | A local substring/regex check (`any`/`all`/`none`/`off`) that skips a chunk without calling the model at all. |
 | `prompt` | `system`/`user` templates, with `{{ title }}`, `{{ year }}`, `{{ imdb_id }}`, `{{ first_id }}`, `{{ last_id }}`, `{{ chunk }}` placeholders. |
@@ -116,6 +116,27 @@ non-compliant response fails loudly (`ModelOutputError`, one file marked in erro
 of silently corrupting a result — but a model with a high violation rate means a search
 with a high per-file error rate. Prefer the smallest model that reliably follows your
 schema; test with `--dry-run` and a `--limit` trial before committing to a full-corpus run.
+
+## Deduplicating translations
+
+OpenSubtitles frequently carries several independent translations for the same
+`(imdb_id, language)` — a dozen or more is not unusual. `select.one_subtitle_per_title`
+(on by default) keeps only the one most likely to carry the fullest legitimate dialogue
+transcript, cutting redundant Ollama calls; set it to `false` to analyze every
+translation. See [ADR-0020](../docs/adr/0020-deduplicate-subtitle-translations-by-size.md)
+for the algorithm and the empirical thresholds behind it.
+
+For a real run, the ranking is based on `subtitle_files.size_bytes`, populated by
+`corpus index` — rerun it after upgrading to this version if your catalog predates it, or
+every group ties and the pick degrades to an arbitrary (but still deterministic) one.
+
+`--dry-run` applies the same algorithm, but computes sizes directly from the archive's own
+central directory rather than the catalog — so it is never affected by a stale catalog,
+but it does read the archive's whole metadata once before printing anything (still no
+member content, no decompression), rather than stopping at the first match. Expect a
+`--dry-run` invocation to take a few extra seconds on the full corpus when
+`one_subtitle_per_title` is on (the default); set it to `false` for the previous,
+near-instant first-match preview.
 
 ## Prefiltering
 

@@ -36,13 +36,14 @@ def test_normalize_imdb_id_rejects_garbage(raw: str) -> None:
 
 
 def test_parse_entry_reads_the_documented_example() -> None:
-    entry = parse_entry(Path("OpenSubtitles/raw/fr/2022/1596342/1957893755.xml"))
+    entry = parse_entry(Path("OpenSubtitles/raw/fr/2022/1596342/1957893755.xml"), size_bytes=1234)
     assert entry == CorpusEntry(
         rel_path="OpenSubtitles/raw/fr/2022/1596342/1957893755.xml",
         language="fr",
         year=2022,
         imdb_id="tt1596342",
         opensubtitles_file_id="1957893755",
+        size_bytes=1234,
     )
 
 
@@ -52,25 +53,28 @@ def test_parse_entry_reads_a_tv_episode_compound_segment() -> None:
     Confirmed against `title.episode.tsv` (see the module docstring); only the episode's
     own id survives normalization.
     """
-    entry = parse_entry(Path("OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml"))
+    entry = parse_entry(
+        Path("OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml"), size_bytes=5678
+    )
     assert entry == CorpusEntry(
         rel_path="OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml",
         language="en",
         year=1956,
         imdb_id="tt0674159",
         opensubtitles_file_id="1957044904",
+        size_bytes=5678,
     )
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises Windows-style backslash separators")
 def test_parse_entry_normalizes_windows_separators() -> None:
     """`rel_path` must stay `/`-joined: it is `CorpusArchive.open_member`'s only key."""
-    entry = parse_entry(Path("OpenSubtitles\\raw\\en\\1999\\0133093\\3660124.xml"))
+    entry = parse_entry(Path("OpenSubtitles\\raw\\en\\1999\\0133093\\3660124.xml"), size_bytes=0)
     assert entry.rel_path == "OpenSubtitles/raw/en/1999/0133093/3660124.xml"
 
 
 def test_parse_entry_tolerates_a_non_numeric_year_directory() -> None:
-    entry = parse_entry(Path("OpenSubtitles/raw/en/unknown/0133093/3660124.xml"))
+    entry = parse_entry(Path("OpenSubtitles/raw/en/unknown/0133093/3660124.xml"), size_bytes=0)
     assert entry.year is None
     assert entry.imdb_id == "tt0133093"
 
@@ -86,7 +90,7 @@ def test_parse_entry_tolerates_a_non_numeric_year_directory() -> None:
 )
 def test_parse_entry_rejects_unexpected_shapes(rel_path: str) -> None:
     with pytest.raises(CorpusLayoutError):
-        parse_entry(Path(rel_path))
+        parse_entry(Path(rel_path), size_bytes=0)
 
 
 def test_iter_corpus_skips_unparsable_members_and_filters_by_language(tmp_path: Path) -> None:
@@ -107,6 +111,23 @@ def test_iter_corpus_skips_unparsable_members_and_filters_by_language(tmp_path: 
     assert [entry.rel_path for entry in en_entries] == [
         "OpenSubtitles/raw/en/1999/0133093/3660124.xml"
     ]
+
+
+def test_iter_corpus_carries_the_member_size(tmp_path: Path) -> None:
+    """`size_bytes` must come from the archive's central directory, not a placeholder.
+
+    This is what `cli/corpus.py::_flush_catalog` relies on to populate
+    `subtitle_files.size_bytes` for free, with no member ever opened or decompressed.
+    """
+    path = tmp_path / "sized.zip"
+    content = '<document><s id="1">Hello.</s></document>'
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("OpenSubtitles/raw/en/1999/0133093/3660124.xml", content)
+
+    with CorpusArchive(path) as corpus_archive:
+        (entry,) = list(iter_corpus(corpus_archive))
+
+    assert entry.size_bytes == len(content.encode("utf-8"))
 
 
 def test_iter_corpus_calls_on_member_for_every_member_regardless_of_outcome(

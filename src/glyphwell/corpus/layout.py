@@ -76,6 +76,9 @@ class CorpusEntry:
         year: year carried by the layout, `None` if the directory is not a year.
         imdb_id: canonical identifier, ``tt`` prefix included.
         opensubtitles_file_id: identifier of the subtitle on opensubtitles.org.
+        size_bytes: uncompressed member size, from the archive's central directory
+            (`ArchiveMember.size`) — not derived from `rel_path`, so `parse_entry` takes it
+            as a parameter rather than computing it.
     """
 
     rel_path: str
@@ -83,6 +86,7 @@ class CorpusEntry:
     year: int | None
     imdb_id: ImdbId
     opensubtitles_file_id: OpenSubtitlesFileId
+    size_bytes: int
 
 
 def normalize_imdb_id(raw: str) -> ImdbId:
@@ -140,12 +144,14 @@ def imdb_id_from_int(value: int) -> ImdbId:
     return f"tt{value:0{IMDB_ID_WIDTH}d}"
 
 
-def parse_entry(rel_path: Path) -> CorpusEntry:
+def parse_entry(rel_path: Path, *, size_bytes: int) -> CorpusEntry:
     """Interprets a relative corpus path.
 
     Args:
         rel_path: name of an archive member, for example
             ``OpenSubtitles/raw/en/1999/0133093/3660124.xml``.
+        size_bytes: the member's uncompressed size, carried through unparsed (see
+            `CorpusEntry.size_bytes`).
 
     Returns:
         The entry described by this path.
@@ -189,6 +195,7 @@ def parse_entry(rel_path: Path) -> CorpusEntry:
         year=year,
         imdb_id=imdb_id,
         opensubtitles_file_id=opensubtitles_file_id,
+        size_bytes=size_bytes,
     )
 
 
@@ -221,7 +228,7 @@ def iter_corpus(
         if on_member is not None:
             on_member()
         try:
-            entry = parse_entry(Path(member.rel_path))
+            entry = parse_entry(Path(member.rel_path), size_bytes=member.size)
         except CorpusLayoutError as exc:
             skipped += 1
             _log.debug("skipping unparsable member: %s", exc)

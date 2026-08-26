@@ -67,6 +67,44 @@ def _create_run(conn: sqlite3.Connection) -> int:
     )
 
 
+def _seed_duplicate_files(
+    conn: sqlite3.Connection, *, imdb_id: str, sizes: list[int], start: int = 0
+) -> None:
+    """Seeds one title with several competing subtitle files, of the given sizes."""
+    titles = TitlesRepository(conn)
+    files = SubtitleFilesRepository(conn)
+    titles.upsert_many(
+        [
+            TitleRow(
+                imdb_id=imdb_id,
+                title_type="movie",
+                primary_title=f"Title {imdb_id}",
+                original_title=None,
+                start_year=2000,
+                end_year=None,
+                parent_imdb_id=None,
+                season_number=None,
+                episode_number=None,
+            )
+        ]
+    )
+    for offset, size in enumerate(sizes):
+        i = start + offset
+        files.upsert(
+            SubtitleFileRow(
+                file_id=0,
+                opus_version="v2024",
+                language="en",
+                imdb_id=imdb_id,
+                opensubtitles_file_id=str(i),
+                rel_path=f"OpenSubtitles/raw/en/2000/{imdb_id[2:]}/{i}.xml",
+                year=2000,
+                size_bytes=size,
+                sentence_count=None,
+            )
+        )
+
+
 def test_enqueue_paginates_across_batch_boundaries(
     catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -194,6 +232,51 @@ def test_enqueue_expands_a_series_id_to_its_episodes(
     assert [file.rel_path for file in planned] == [
         "OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml"
     ]
+
+
+def test_enqueue_keeps_one_file_per_title_by_default(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
+) -> None:
+    """`select.one_subtitle_per_title` defaults to true: OpenSubtitles carries several
+    translations per title, and only the winning one should reach the queue."""
+    _seed_duplicate_files(catalog_db, imdb_id="tt0133093", sizes=[80948, 80948, 98550])
+    run_id = _create_run(run_db)
+
+    added = planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
+
+    assert added == 1
+    planned = list(planner.iter_work(run_db, run_id=run_id))
+    assert [file.rel_path for file in planned] == ["OpenSubtitles/raw/en/2000/0133093/2.xml"]
+
+
+def test_enqueue_can_disable_deduplication(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
+) -> None:
+    _seed_duplicate_files(catalog_db, imdb_id="tt0133093", sizes=[80948, 80948, 98550])
+    run_id = _create_run(run_db)
+
+    added = planner.enqueue(
+        catalog_db, run_db, run_id=run_id, select=SelectConfig(one_subtitle_per_title=False)
+    )
+
+    assert added == 3
+
+
+def test_enqueue_deduplication_holds_across_batch_boundaries(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dedup pre-pass and the paginated write loop must agree on every page, not just
+    the first — each of several titles keeps exactly one winner."""
+    monkeypatch.setattr(planner, "_ENQUEUE_BATCH_SIZE", 2)
+    for n in range(5):
+        _seed_duplicate_files(catalog_db, imdb_id=f"tt{n:07d}", sizes=[1000, 5000], start=n * 10)
+    run_id = _create_run(run_db)
+
+    added = planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
+
+    assert added == 5
+    planned = list(planner.iter_work(run_db, run_id=run_id))
+    assert all(file.rel_path.endswith(f"{n * 10 + 1}.xml") for n, file in enumerate(planned))
 
 
 def test_iter_work_reflects_enqueued_rel_path_order(

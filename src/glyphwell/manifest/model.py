@@ -136,6 +136,16 @@ class SelectConfig(_Base):
             " expands to every one of its episodes. `null` = the whole corpus."
         ),
     )
+    one_subtitle_per_title: bool = Field(
+        default=True,
+        description=(
+            "OpenSubtitles often carries several independent translations for the same"
+            " (imdb_id, language). When true (the default), only the one most likely to"
+            " carry the fullest legitimate dialogue transcript is analyzed, cutting"
+            " redundant Ollama calls; set to false to analyze every translation. Requires"
+            " `subtitle_files.size_bytes` (populated by `corpus index`) — see ADR-0020."
+        ),
+    )
 
 
 class PromptConfig(_Base):

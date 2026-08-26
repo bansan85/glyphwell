@@ -207,6 +207,22 @@ below sit under `Unreleased`.
   is requested *or* its title's `parent_imdb_id` is, and `cli/search.py::_matches_select`
   (the `--dry-run` preview path) mirrors the same rule so a preview picks the same file a
   real run would enqueue.
+- **`select.one_subtitle_per_title`, on by default, keeps one subtitle file per
+  `(imdb_id, language)` instead of every translation OpenSubtitles carries for it
+  (ADR-0020).** `corpus index` now records each member's uncompressed size in
+  `subtitle_files.size_bytes` — free, from the archive's central directory, no member
+  content read (`corpus/layout.py::CorpusEntry.size_bytes`, threaded through
+  `parse_entry`/`iter_corpus`). `search/dedup.py::select_representative` ranks candidates
+  by that size alone: it purges degenerate low outliers (forced-only/commentary tracks),
+  then a maximum standing disproportionately above its runner-up (a different cut, a
+  concatenated release...), and keeps whichever remains largest — thresholds calibrated
+  against 241,285 real duplicate groups in the `v2024`/`raw`/`en` archive (ADR-0020).
+  `search/planner.py::enqueue` stages the winners in a temp table
+  (`_prepare_dedup_winners`) before its existing paginated queue-building query runs, so
+  the well-tested pagination/transaction logic itself is unchanged. `--dry-run`
+  (`cli/search.py::_first_deduplicated_match`) applies the same
+  `search/dedup.py::select_representative` against an in-memory grouping of the archive's
+  own metadata, so a preview and a real run never disagree on which file wins a group.
 
 #### Documentation
 
@@ -368,8 +384,9 @@ are now implemented; see *Known limitations* for the handful that still raise
 | `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `ProgressCallback`, `download`, `import_basics`, `import_episodes`, `iter_rows`, `locate_dataset` |
 | `glyphwell.ollama` | `Completion`, `LlmClient`, `OllamaClient`, `PromptContext`, `render`, `render_context` |
 | `glyphwell.ollama.prompts` | `PLACEHOLDERS`, `PromptContext`, `render`, `render_context` |
-| `glyphwell.search` | `Checkpoint`, `ExportFormat`, `PlannedFile`, `SearchEngine`, `SearchOutcome`, `ValidatedOutput`, `commit_chunk`, `enqueue`, `export_run`, `iter_work`, `load_checkpoint`, `validate_output` |
+| `glyphwell.search` | `Candidate`, `Checkpoint`, `ExportFormat`, `PlannedFile`, `SearchEngine`, `SearchOutcome`, `ValidatedOutput`, `commit_chunk`, `enqueue`, `export_run`, `iter_work`, `load_checkpoint`, `select_representative`, `validate_output` |
 | `glyphwell.search.checkpoint` | `Checkpoint`, `commit_chunk`, `load_checkpoint`, `resume_position` |
+| `glyphwell.search.dedup` | `Candidate`, `select_representative` |
 | `glyphwell.search.planner` | `PlannedFile`, `enqueue`, `iter_work`, `plan_size` |
 | `glyphwell.search.results` | `ExportFormat`, `ValidatedOutput`, `export_run`, `validate_output` |
 
@@ -439,6 +456,23 @@ glyphwell search    run [--limit --concurrency --run-database --dry-run]
   `t.parent_imdb_id IN (...)` branch of the `OR` is evaluated per matched row rather than
   used to seek. Measure with `EXPLAIN QUERY PLAN` before adding `idx_titles_parent` back
   via a new migration.
+- **`--dry-run` now reads the whole archive's metadata once, instead of stopping at the
+  first match (ADR-0020).** `select.one_subtitle_per_title` (on by default) needs every
+  candidate sharing a title's `(imdb_id, language)` in hand before picking a winner
+  (`cli/search.py::_first_deduplicated_match`) — a single streamed first-match pass cannot
+  offer that. The trade-off is deliberate: previewing a file a real run would not actually
+  process would be a worse default than a few extra seconds of archive metadata scanning
+  (central directory only, no member content read). Set `select.one_subtitle_per_title:
+  false` to fall back to the previous, near-instant first-match preview.
+- **A catalog indexed before `subtitle_files.size_bytes` existed degrades deduplication
+  silently rather than failing, for a real run only (ADR-0020).**
+  `search/planner.py::_prepare_dedup_winners` treats a `NULL` size as `0`; if every
+  candidate in a group is `NULL` (a catalog never reindexed since upgrading), every
+  candidate ties and `select_representative` falls back to its lowest-
+  `opensubtitles_file_id` tie-break — deterministic, but no longer a size-informed pick.
+  Rerun `corpus index` after upgrading rather than relying on this fallback. `--dry-run`
+  is unaffected: `cli/search.py::_first_deduplicated_match` reads `size_bytes` straight
+  from the archive's own central directory, never from the catalog.
 - **`Settings.concurrency` is bounded twice (ADR-0012).** Raising it past what the Ollama
   server can actually run in parallel — `OLLAMA_NUM_PARALLEL`, and the model's fit in
   available VRAM — buys nothing: a single, VRAM-constrained GPU serializes the underlying
@@ -505,3 +539,4 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0017 — eagerly materialize the search work queue rather than stream it
 - ADR-0018 — split the catalog and per-search run databases
 - ADR-0019 — expand a series id in `select.imdb_ids` to its episodes
+- ADR-0020 — deduplicate subtitle translations by size

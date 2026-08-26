@@ -361,7 +361,9 @@ def _catalog(
 ) -> int:
     """Walks the archive and upserts every entry into `subtitle_files`.
 
-    Never reads subtitle content: only what `iter_corpus` derives from the member name.
+    Never reads subtitle content: only what `iter_corpus` derives from the member name,
+    plus its uncompressed size — already known from the zip's central directory, read once
+    when the archive was opened, so recording it costs nothing extra here.
     """
     repo = SubtitleFilesRepository(conn)
     count = 0
@@ -402,7 +404,7 @@ def _flush_catalog(
                     opensubtitles_file_id=entry.opensubtitles_file_id,
                     rel_path=entry.rel_path,
                     year=entry.year,
-                    size_bytes=None,
+                    size_bytes=entry.size_bytes,
                     sentence_count=None,
                 )
             )

@@ -13,6 +13,7 @@ same sentence range from one run to the next, and the uniqueness constraint on `
 would stop guaranteeing idempotence.
 """
 
+import itertools
 import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Final
 from glyphwell.db.repositories import FileStatus, RunFilesRepository
 from glyphwell.errors import DatabaseError
 from glyphwell.logging import get_logger
+from glyphwell.search.dedup import Candidate, select_representative
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -71,6 +73,10 @@ def enqueue(
     identifier remains unresolved are discarded, and their count is logged — otherwise a
     corpus indexed without metadata would produce an empty queue with no explanation.
 
+    When `select.one_subtitle_per_title` is set (the default), a preliminary read-only
+    pass (`_prepare_dedup_winners`) picks one file per `(imdb_id, language)` group before
+    any pagination starts — see its docstring and ADR-0020.
+
     Paginates the matching query (against `catalog_conn`) on `sf.file_id` (keyset
     pagination) instead of holding one long-lived `SELECT` cursor open across every
     write: in WAL mode, an open reader pins the checkpoint to the point its snapshot
@@ -82,6 +88,9 @@ def enqueue(
     Raises:
         DatabaseError: write failed.
     """
+    if select.one_subtitle_per_title:
+        _prepare_dedup_winners(catalog_conn, select)
+
     repo = RunFilesRepository(run_conn)
     added = 0
     scanned = 0
@@ -90,7 +99,10 @@ def enqueue(
     try:
         while True:
             query, params = _matching_page_query(
-                select, after_id=after_id, limit=_ENQUEUE_BATCH_SIZE
+                select,
+                after_id=after_id,
+                limit=_ENQUEUE_BATCH_SIZE,
+                dedup_active=select.one_subtitle_per_title,
             )
             batch = [
                 (int(row["file_id"]), str(row["rel_path"]))
@@ -183,13 +195,13 @@ def _select_clauses(select: "SelectConfig") -> tuple[list[str], list[object]]:
     return clauses, params
 
 
-def _matching_page_query(
-    select: "SelectConfig", *, after_id: int, limit: int
-) -> tuple[str, list[object]]:
-    """One page of files whose title resolves and satisfies every filter.
+def _filter_clauses(select: "SelectConfig") -> tuple[list[str], list[object]]:
+    """``WHERE`` clauses shared by every query matching `subtitle_files` against `select`.
 
-    Keyset-paginated on `sf.file_id` (the table's own `INTEGER PRIMARY KEY`): cheap,
-    index-backed, and — unlike an `OFFSET` — its cost doesn't grow with the page number.
+    Built on top of `_select_clauses` (language, id list): adds the title-level filters
+    that also require the `titles` join (type, year range). Shared by
+    `_matching_page_query` and `_grouping_query` so the two queries can never disagree on
+    which files are in scope — only their column list, pagination, and ordering differ.
     """
     clauses, params = _select_clauses(select)
     if select.title_types:
@@ -201,8 +213,26 @@ def _matching_page_query(
     if select.years.max is not None:
         clauses.append("t.start_year <= ?")
         params.append(select.years.max)
+    return clauses, params
+
+
+def _matching_page_query(
+    select: "SelectConfig", *, after_id: int, limit: int, dedup_active: bool
+) -> tuple[str, list[object]]:
+    """One page of files whose title resolves and satisfies every filter.
+
+    Keyset-paginated on `sf.file_id` (the table's own `INTEGER PRIMARY KEY`): cheap,
+    index-backed, and — unlike an `OFFSET` — its cost doesn't grow with the page number.
+
+    `dedup_active` restricts the page to `dedup_winners`, the temp table
+    `_prepare_dedup_winners` must have already staged on the same `catalog_conn` — the
+    caller (`enqueue`) is responsible for that ordering.
+    """
+    clauses, params = _filter_clauses(select)
     clauses.append("sf.file_id > ?")
     params.append(after_id)
+    if dedup_active:
+        clauses.append("sf.file_id IN (SELECT file_id FROM dedup_winners)")
     where = f" WHERE {' AND '.join(clauses)}"
     query = (
         "SELECT sf.file_id, sf.rel_path FROM subtitle_files sf"
@@ -223,6 +253,91 @@ def _unresolved_query(select: "SelectConfig") -> tuple[str, list[object]]:
         f" LEFT JOIN titles t ON t.imdb_id = sf.imdb_id{where}"
     )
     return query, params
+
+
+def _grouping_query(select: "SelectConfig") -> tuple[str, list[object]]:
+    """Every candidate matching `select`, ordered for per-`(imdb_id, language)` grouping.
+
+    No pagination: used only by `_prepare_dedup_winners`, which needs every candidate of a
+    group in hand before it can pick a winner — a keyset page could otherwise split one
+    group across two pages. The resulting *winners* are bounded by title count, not file
+    count (see `_prepare_dedup_winners`); the candidate rows themselves are consumed one
+    group at a time from a single streamed cursor, never materialized in full.
+    """
+    clauses, params = _filter_clauses(select)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    query = (
+        "SELECT sf.imdb_id, sf.language, sf.file_id, sf.size_bytes, sf.opensubtitles_file_id"
+        " FROM subtitle_files sf"
+        " JOIN titles t ON t.imdb_id = sf.imdb_id"
+        f"{where} ORDER BY sf.imdb_id, sf.language, sf.file_id"
+    )
+    return query, params
+
+
+def _group_key(row: sqlite3.Row) -> tuple[int, str]:
+    """Groups candidates by `(imdb_id, language)`, matching `_grouping_query`'s ordering."""
+    return int(row["imdb_id"]), str(row["language"])
+
+
+def _prepare_dedup_winners(catalog_conn: sqlite3.Connection, select: "SelectConfig") -> None:
+    """Stages, in a temp table, the winning `file_id` of every `(imdb_id, language)` group.
+
+    A dedicated read-then-write pass, run once before `enqueue`'s own paginated loop
+    starts: `_grouping_query` drives a single ordered, streamed cursor with no writes
+    interleaved (unlike `enqueue`'s own loop, this reads every matching row once, but
+    never holds more than one group in memory at a time — see its docstring), and
+    `select_representative` (ADR-0020) picks one winner per group. Those winners — bounded
+    by *title* count, an order of magnitude fewer than file count on the real corpus (see
+    ADR-0020) — are then staged in batched transactions, exactly like `enqueue`'s own
+    write loop.
+
+    `sf.file_id IN (SELECT file_id FROM dedup_winners)` in `_matching_page_query`
+    sidesteps SQLite's bound-parameter limit, which inlining the same set as
+    `IN (?, ?, ...)` would hit for a corpus-wide search.
+
+    A missing `subtitle_files.size_bytes` (a catalog indexed before this column was
+    populated — see `cli/corpus.py`) is treated as `0`, not an error: `corpus index`
+    should simply be rerun to get a meaningful ranking, but a stale catalog must still
+    produce a deterministic (if degraded) result rather than crash the whole search.
+
+    Raises:
+        DatabaseError: write failed.
+    """
+    catalog_conn.execute("DROP TABLE IF EXISTS temp.dedup_winners")
+    catalog_conn.execute("CREATE TEMP TABLE dedup_winners (file_id INTEGER PRIMARY KEY)")
+
+    query, params = _grouping_query(select)
+    cursor = catalog_conn.execute(query, params)
+    batch: list[tuple[int]] = []
+    for _key, group in itertools.groupby(cursor, key=_group_key):
+        candidates = (
+            Candidate(
+                file_id=int(row["file_id"]),
+                size_bytes=0 if row["size_bytes"] is None else int(row["size_bytes"]),
+                opensubtitles_file_id=str(row["opensubtitles_file_id"]),
+            )
+            for row in group
+        )
+        winner = select_representative(candidates)
+        batch.append((winner.file_id,))
+        if len(batch) >= _ENQUEUE_BATCH_SIZE:
+            _flush_dedup_winners(catalog_conn, batch)
+            batch.clear()
+    if batch:
+        _flush_dedup_winners(catalog_conn, batch)
+
+
+def _flush_dedup_winners(catalog_conn: sqlite3.Connection, batch: list[tuple[int]]) -> None:
+    """Inserts one batch of dedup winners in its own transaction."""
+    catalog_conn.execute("BEGIN")
+    try:
+        catalog_conn.executemany("INSERT INTO dedup_winners (file_id) VALUES (?)", batch)
+    except sqlite3.Error as exc:
+        catalog_conn.execute("ROLLBACK")
+        message = f"failed to stage subtitle deduplication winners: {exc}"
+        raise DatabaseError(message) from exc
+    catalog_conn.execute("COMMIT")
 
 
 def _placeholders(count: int) -> str:

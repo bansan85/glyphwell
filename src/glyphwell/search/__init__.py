@@ -1,11 +1,13 @@
 """Search engine: planning, execution, resume, export."""
 
 from glyphwell.search.checkpoint import Checkpoint, commit_chunk, load_checkpoint
+from glyphwell.search.dedup import Candidate, select_representative
 from glyphwell.search.engine import SearchEngine, SearchOutcome
 from glyphwell.search.planner import PlannedFile, enqueue, iter_work
 from glyphwell.search.results import ExportFormat, ValidatedOutput, export_run, validate_output
 
 __all__ = [
+    "Candidate",
     "Checkpoint",
     "ExportFormat",
     "PlannedFile",
@@ -17,5 +19,6 @@ __all__ = [
     "export_run",
     "iter_work",
     "load_checkpoint",
+    "select_representative",
     "validate_output",
 ]

@@ -29,6 +29,7 @@ from glyphwell.metadata.resolver import SqliteTitleProvider
 from glyphwell.ollama.client import OllamaClient
 from glyphwell.ollama.prompts import render, render_context
 from glyphwell.search import planner
+from glyphwell.search.dedup import Candidate, select_representative
 from glyphwell.search.engine import SearchEngine, SearchOutcome
 from glyphwell.search.results import ExportFormat
 
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from glyphwell.manifest.loader import LoadedManifest
     from glyphwell.manifest.model import SelectConfig
     from glyphwell.metadata.resolver import Title
+    from glyphwell.types import ImdbId, LanguageCode
 
 __all__ = ["app"]
 
@@ -215,12 +217,14 @@ def _first_match(
     select: "SelectConfig",
     titles: SqliteTitleProvider,
 ) -> "tuple[CorpusEntry, Title | None] | None":
-    """First archive entry matching `select`, in encounter order.
+    """First file matching `select`, deduplication included.
 
-    Not the planner's ``ORDER BY rel_path``: sorting the whole entry stream just to
-    preview one file would be wasteful at corpus scale. An id that doesn't resolve to a
-    title is excluded, mirroring `glyphwell.search.planner.enqueue`'s own policy.
+    Delegates to `_first_deduplicated_match` when `select.one_subtitle_per_title` is set
+    (the default) — an id that doesn't resolve to a title is excluded either way, mirroring
+    `glyphwell.search.planner.enqueue`'s own policy.
     """
+    if select.one_subtitle_per_title:
+        return _first_deduplicated_match(archive, select, titles)
     for entry in iter_corpus(archive):
         title = titles.resolve(entry.imdb_id)
         if _matches_select(entry, title, select):
@@ -228,8 +232,54 @@ def _first_match(
     return None
 
 
+def _first_deduplicated_match(
+    archive: CorpusArchive,
+    select: "SelectConfig",
+    titles: SqliteTitleProvider,
+) -> "tuple[CorpusEntry, Title | None] | None":
+    """First `(imdb_id, language)` group's deduplication winner that also satisfies the
+    rest of `select`.
+
+    The archive analog of `search/planner.py::_prepare_dedup_winners`: the same
+    `search/dedup.py::select_representative` picks the winner in both places (ADR-0020),
+    so a dry-run preview and a real run can never disagree on which file wins a group —
+    only the candidate source differs (an in-memory grouping of the archive's own metadata
+    here, a SQL query over `subtitle_files` there).
+
+    Unlike `_first_match`'s plain streamed pass, this reads the *whole* archive's metadata
+    once before returning anything: the archive's member order is not guaranteed to keep a
+    title's translations adjacent, so no group's winner can be decided from a partial view
+    of it. `iter_corpus`'s `language` filter is pushed down when `select` names exactly one
+    language, to avoid grouping translations no result could ever use; a real run's `en`
+    per-language archive makes this the common case.
+    """
+    single_language = select.languages[0] if len(select.languages) == 1 else None
+    groups: dict[tuple[ImdbId, LanguageCode], list[CorpusEntry]] = {}
+    for entry in iter_corpus(archive, language=single_language):
+        if select.languages and entry.language not in select.languages:
+            continue
+        groups.setdefault((entry.imdb_id, entry.language), []).append(entry)
+
+    for entries in groups.values():
+        candidates = [
+            Candidate(
+                file_id=index,
+                size_bytes=entry.size_bytes,
+                opensubtitles_file_id=entry.opensubtitles_file_id,
+            )
+            for index, entry in enumerate(entries)
+        ]
+        winner = entries[select_representative(candidates).file_id]
+        title = titles.resolve(winner.imdb_id)
+        if _matches_select(winner, title, select):
+            return winner, title
+    return None
+
+
 def _matches_select(entry: "CorpusEntry", title: "Title | None", select: "SelectConfig") -> bool:
-    """Whether a corpus entry satisfies a manifest's `select` filters.
+    """Whether a corpus entry satisfies a manifest's `select` filters, deduplication
+    aside — `_first_deduplicated_match` applies that one separately, since it needs every
+    candidate of a group at once (see its docstring).
 
     `imdb_ids` matches the entry's own id or, for an episode, its series' id — mirroring
     `search/planner.py::_select_clauses`'s ``sf.imdb_id OR t.parent_imdb_id`` filter, so a

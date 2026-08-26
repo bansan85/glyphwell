@@ -81,6 +81,7 @@ def test_index_catalogs_every_subtitle(tmp_path: Path) -> None:
         assert row is not None
         assert row.imdb_id == "tt0133093"
         assert row.year == 1999
+        assert row.size_bytes == len('<document><s id="1">Hello.</s></document>')
 
 
 def test_index_catalogs_archive_with_skipped_members(tmp_path: Path) -> None:

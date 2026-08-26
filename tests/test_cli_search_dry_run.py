@@ -177,6 +177,91 @@ def test_dry_run_matches_an_episode_via_its_series_id(tmp_path: Path) -> None:
     assert "ski slopes" in result.output
 
 
+def test_dry_run_applies_deduplication_by_default(tmp_path: Path) -> None:
+    """Two translations exist for the same title; the archive lists the smaller, losing
+    one first, so previewing the deduplication winner — not the first encountered file —
+    is the only way this test passes (ADR-0020)."""
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, _env_file=None)
+    archive_path = tmp_path / "corpus.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "OpenSubtitles/raw/en/1999/0133093/1.xml",
+            '<document><s id="1">Forced line only.</s></document>',
+        )
+        archive.writestr(
+            "OpenSubtitles/raw/en/1999/0133093/2.xml",
+            '<document><s id="1">We should hit the ski slopes tomorrow.</s>'
+            '<s id="2">Sounds perfect.</s><s id="3">Padding to stay clearly largest.</s>'
+            '<s id="4">More padding so this file stays clearly largest.</s></document>',
+        )
+    _seed(settings, archive_path)
+
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "name: dedup_test\n"
+        "model: test-model\n"
+        "chunk:\n"
+        "  size: 4\n"
+        "  overlap: 0\n"
+        "prompt:\n"
+        "  user: |\n"
+        "    {{ chunk }}\n"
+        "output:\n"
+        "  format: text\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app, ["--data-dir", str(data_dir), "search", "run", str(manifest_path), "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "ski slopes" in result.output
+    assert "Forced line only" not in result.output
+
+
+def test_dry_run_can_disable_deduplication(tmp_path: Path) -> None:
+    """`select.one_subtitle_per_title: false` restores plain first-encounter behavior."""
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, _env_file=None)
+    archive_path = tmp_path / "corpus.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "OpenSubtitles/raw/en/1999/0133093/1.xml",
+            '<document><s id="1">Forced line only.</s></document>',
+        )
+        archive.writestr(
+            "OpenSubtitles/raw/en/1999/0133093/2.xml",
+            '<document><s id="1">We should hit the ski slopes tomorrow.</s></document>',
+        )
+    _seed(settings, archive_path)
+
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "name: dedup_disabled_test\n"
+        "model: test-model\n"
+        "select:\n"
+        "  one_subtitle_per_title: false\n"
+        "chunk:\n"
+        "  size: 4\n"
+        "  overlap: 0\n"
+        "prompt:\n"
+        "  user: |\n"
+        "    {{ chunk }}\n"
+        "output:\n"
+        "  format: text\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app, ["--data-dir", str(data_dir), "search", "run", str(manifest_path), "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Forced line only" in result.output
+
+
 def test_dry_run_without_a_match_fails_cleanly(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     settings = Settings(data_dir=data_dir, _env_file=None)
