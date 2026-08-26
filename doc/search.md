@@ -92,7 +92,7 @@ top-level sections:
 | Section | Purpose |
 |---|---|
 | `model`, `options` | Ollama model tag and generation options (`temperature`, `num_ctx`, `num_predict`, ...), passed through as-is. |
-| `select` | Which subtitles to analyze: language, IMDb title type, year range, or an explicit id list. Requires the IMDb datasets to be imported for anything beyond language. |
+| `select` | Which subtitles to analyze: language, IMDb title type, year range, or an explicit id list (a series id expands to all of its episodes). Requires the IMDb datasets to be imported for anything beyond language. |
 | `chunk` | `size`/`overlap`, in sentences — the unit of both a model call and the resume cursor. |
 | `prefilter` | A local substring/regex check (`any`/`all`/`none`/`off`) that skips a chunk without calling the model at all. |
 | `prompt` | `system`/`user` templates, with `{{ title }}`, `{{ year }}`, `{{ imdb_id }}`, `{{ first_id }}`, `{{ last_id }}`, `{{ chunk }}` placeholders. |

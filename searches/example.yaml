@@ -41,7 +41,9 @@ select:
   years:
     min: null
     max: null
-  imdb_ids: null # null or an explicit list of bare numeric ids: [133093]
+  # null or an explicit list of bare numeric ids: [133093]. A series id expands to
+  # every one of its episodes (matched via the IMDb datasets' parent-title link).
+  imdb_ids: null
 
 # --------------------------------------------------------------------------------------
 # Chunking — unit of model calls AND unit of resuming

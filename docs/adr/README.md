@@ -29,6 +29,7 @@ recorded here.
 | [0016](0016-keep-only-the-episode-id-from-tv-compound-segments.md) | Keep only the episode id from the TV-episode compound segment | Accepted | 2026-08-25 |
 | [0017](0017-eager-work-queue-not-streamed.md) | Eagerly materialize the search work queue rather than stream it | Accepted | 2026-08-26 |
 | [0018](0018-split-catalog-and-run-databases.md) | Split the catalog and per-search run databases | Accepted | 2026-08-26 |
+| [0019](0019-expand-series-imdb-ids-to-episodes.md) | Expand a series id in `select.imdb_ids` to its episodes | Accepted | 2026-08-26 |
 
 ## Statuses
 

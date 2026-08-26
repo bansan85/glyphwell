@@ -160,10 +160,15 @@ def plan_size(run_conn: sqlite3.Connection, run_id: int) -> tuple[int, int]:
 
 
 def _select_clauses(select: "SelectConfig") -> tuple[list[str], list[object]]:
-    """Shared corpus-level ``WHERE`` clauses: language and an explicit id list.
+    """Shared ``WHERE`` clauses: language and an explicit id list.
 
-    Kept separate from the title-dependent clauses (`title_types`, `years`), which only
-    make sense once a title row is known to exist at all.
+    An id in `imdb_ids` matches a file directly (`sf.imdb_id`) or, for a TV episode,
+    through its series (`t.parent_imdb_id`) — so listing a series' id selects every one
+    of its episodes without the caller having to enumerate them. This relies on the
+    `titles` join already present in both callers: `_matching_page_query`'s inner join
+    (`t` is the file's own title row) and `_unresolved_query`'s left join, where an
+    unresolved file's `t` columns are all `NULL` and only the direct-id branch can still
+    match.
     """
     clauses: list[str] = []
     params: list[object] = []
@@ -171,7 +176,9 @@ def _select_clauses(select: "SelectConfig") -> tuple[list[str], list[object]]:
         clauses.append(f"sf.language IN ({_placeholders(len(select.languages))})")
         params.extend(select.languages)
     if select.imdb_ids is not None:
-        clauses.append(f"sf.imdb_id IN ({_placeholders(len(select.imdb_ids))})")
+        placeholders = _placeholders(len(select.imdb_ids))
+        clauses.append(f"(sf.imdb_id IN ({placeholders}) OR t.parent_imdb_id IN ({placeholders}))")
+        params.extend(select.imdb_ids)
         params.extend(select.imdb_ids)
     return clauses, params
 

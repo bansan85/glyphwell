@@ -96,6 +96,87 @@ def test_dry_run_renders_a_real_chunk_without_touching_the_database(tmp_path: Pa
     assert not (data_dir / "manifest.db").exists()
 
 
+def test_dry_run_matches_an_episode_via_its_series_id(tmp_path: Path) -> None:
+    """`select.imdb_ids` naming a series must preview one of its episodes.
+
+    Mirrors `search/planner.py::_select_clauses`'s ``sf.imdb_id OR t.parent_imdb_id``
+    expansion, so `--dry-run` previews the same file a real run would enqueue.
+    """
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, _env_file=None)
+    archive_path = tmp_path / "corpus.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "OpenSubtitles/raw/en/1956/674159_47763_2_13/1.xml",
+            '<document><s id="1">We should hit the ski slopes tomorrow.</s>'
+            '<s id="2">Sounds perfect.</s></document>',
+        )
+
+    with connect(settings.catalog_database_path, create=True) as conn:
+        initialize_catalog(conn)
+        CorpusDownloadsRepository(conn).upsert(
+            CorpusDownloadRow(
+                opus_corpus=settings.opus_corpus,
+                opus_version=settings.opus_version,
+                language=settings.opus_language,
+                url=None,
+                archive_path=str(archive_path),
+                sha256=None,
+                status=DownloadStatus.DOWNLOADED,
+            )
+        )
+        TitlesRepository(conn).upsert_many(
+            [
+                TitleRow(
+                    imdb_id="tt0047763",
+                    title_type="tvSeries",
+                    primary_title="A Series",
+                    original_title=None,
+                    start_year=1956,
+                    end_year=None,
+                    parent_imdb_id=None,
+                    season_number=None,
+                    episode_number=None,
+                ),
+                TitleRow(
+                    imdb_id="tt0674159",
+                    title_type="tvEpisode",
+                    primary_title="An Episode",
+                    original_title=None,
+                    start_year=1956,
+                    end_year=None,
+                    parent_imdb_id="tt0047763",
+                    season_number=2,
+                    episode_number=13,
+                ),
+            ]
+        )
+
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "name: dry_run_series_test\n"
+        "model: test-model\n"
+        "select:\n"
+        "  imdb_ids: [47763]\n"
+        "chunk:\n"
+        "  size: 2\n"
+        "  overlap: 0\n"
+        "prompt:\n"
+        "  user: |\n"
+        "    {{ chunk }}\n"
+        "output:\n"
+        "  format: text\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app, ["--data-dir", str(data_dir), "search", "run", str(manifest_path), "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "ski slopes" in result.output
+
+
 def test_dry_run_without_a_match_fails_cleanly(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     settings = Settings(data_dir=data_dir, _env_file=None)

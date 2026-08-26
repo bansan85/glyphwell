@@ -114,6 +114,88 @@ def test_enqueue_respects_title_type_filter_across_pages(
     assert added == 3
 
 
+def test_enqueue_expands_a_series_id_to_its_episodes(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
+) -> None:
+    """`select.imdb_ids` naming a series must enqueue every episode linked to it."""
+    titles = TitlesRepository(catalog_db)
+    files = SubtitleFilesRepository(catalog_db)
+    titles.upsert_many(
+        [
+            TitleRow(
+                imdb_id="tt0047763",
+                title_type="tvSeries",
+                primary_title="A Series",
+                original_title=None,
+                start_year=1956,
+                end_year=None,
+                parent_imdb_id=None,
+                season_number=None,
+                episode_number=None,
+            ),
+            TitleRow(
+                imdb_id="tt0674159",
+                title_type="tvEpisode",
+                primary_title="An Episode",
+                original_title=None,
+                start_year=1956,
+                end_year=None,
+                parent_imdb_id="tt0047763",
+                season_number=2,
+                episode_number=13,
+            ),
+            TitleRow(
+                imdb_id="tt0133093",
+                title_type="movie",
+                primary_title="An Unrelated Movie",
+                original_title=None,
+                start_year=1999,
+                end_year=None,
+                parent_imdb_id=None,
+                season_number=None,
+                episode_number=None,
+            ),
+        ]
+    )
+    files.upsert(
+        SubtitleFileRow(
+            file_id=0,
+            opus_version="v2024",
+            language="en",
+            imdb_id="tt0674159",
+            opensubtitles_file_id="1957044904",
+            rel_path="OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml",
+            year=1956,
+            size_bytes=None,
+            sentence_count=None,
+        )
+    )
+    files.upsert(
+        SubtitleFileRow(
+            file_id=0,
+            opus_version="v2024",
+            language="en",
+            imdb_id="tt0133093",
+            opensubtitles_file_id="1",
+            rel_path="OpenSubtitles/raw/en/1999/0133093/1.xml",
+            year=1999,
+            size_bytes=None,
+            sentence_count=None,
+        )
+    )
+    run_id = _create_run(run_db)
+
+    added = planner.enqueue(
+        catalog_db, run_db, run_id=run_id, select=SelectConfig(imdb_ids=(47763,))
+    )
+
+    assert added == 1
+    planned = list(planner.iter_work(run_db, run_id=run_id))
+    assert [file.rel_path for file in planned] == [
+        "OpenSubtitles/raw/en/1956/674159_47763_2_13/1957044904.xml"
+    ]
+
+
 def test_iter_work_reflects_enqueued_rel_path_order(
     catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
 ) -> None:

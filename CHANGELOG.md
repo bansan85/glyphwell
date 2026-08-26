@@ -200,6 +200,13 @@ below sit under `Unreleased`.
 - `searches/example.yaml` gained a worked example (`ski_pistes`): a full
   `select`/`chunk`/`prefilter`/`prompt`/`output` manifest that doubles as regression
   coverage for the manifest format (`test_loads_example_manifest`).
+- **`select.imdb_ids` naming a series now expands to every one of its episodes
+  (ADR-0019).** Subtitle files are catalogued under an episode's own id, never its
+  series' (see `normalize_imdb_id`, ADR-0016), so a series id in `imdb_ids` used to
+  match nothing. `search/planner.py::_select_clauses` now matches a file if its own id
+  is requested *or* its title's `parent_imdb_id` is, and `cli/search.py::_matches_select`
+  (the `--dry-run` preview path) mirrors the same rule so a preview picks the same file a
+  real run would enqueue.
 
 #### Documentation
 
@@ -425,6 +432,13 @@ glyphwell search    run [--limit --concurrency --run-database --dry-run]
   of `titles` would. Measure with `EXPLAIN QUERY PLAN` on a populated database before
   assuming either way, and add the migration ADR-0011 already described if it turns out
   to matter.
+- **`select.imdb_ids`'s series-to-episodes expansion is live without the
+  `idx_titles_parent` index ADR-0011 removed (ADR-0019).** Same situation as the entry
+  directly above, for the same reason: `_matching_page_query` still drives off
+  `subtitle_files` and reaches the joined `titles` row by primary key, so the added
+  `t.parent_imdb_id IN (...)` branch of the `OR` is evaluated per matched row rather than
+  used to seek. Measure with `EXPLAIN QUERY PLAN` before adding `idx_titles_parent` back
+  via a new migration.
 - **`Settings.concurrency` is bounded twice (ADR-0012).** Raising it past what the Ollama
   server can actually run in parallel — `OLLAMA_NUM_PARALLEL`, and the model's fit in
   available VRAM — buys nothing: a single, VRAM-constrained GPU serializes the underlying
@@ -490,3 +504,4 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0016 — keep only the episode id from the TV-episode compound segment
 - ADR-0017 — eagerly materialize the search work queue rather than stream it
 - ADR-0018 — split the catalog and per-search run databases
+- ADR-0019 — expand a series id in `select.imdb_ids` to its episodes

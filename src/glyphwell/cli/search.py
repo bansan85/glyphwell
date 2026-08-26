@@ -229,11 +229,23 @@ def _first_match(
 
 
 def _matches_select(entry: "CorpusEntry", title: "Title | None", select: "SelectConfig") -> bool:
-    """Whether a corpus entry satisfies a manifest's `select` filters."""
+    """Whether a corpus entry satisfies a manifest's `select` filters.
+
+    `imdb_ids` matches the entry's own id or, for an episode, its series' id — mirroring
+    `search/planner.py::_select_clauses`'s ``sf.imdb_id OR t.parent_imdb_id`` filter, so a
+    dry-run preview picks the same files a real run's `enqueue` would.
+    """
     if select.languages and entry.language not in select.languages:
         return False
-    if select.imdb_ids is not None and imdb_id_to_int(entry.imdb_id) not in select.imdb_ids:
-        return False
+    if select.imdb_ids is not None:
+        own_id = imdb_id_to_int(entry.imdb_id)
+        parent_id = (
+            imdb_id_to_int(title.parent_imdb_id)
+            if title is not None and title.parent_imdb_id is not None
+            else None
+        )
+        if own_id not in select.imdb_ids and parent_id not in select.imdb_ids:
+            return False
     if title is None:
         return False
     if select.title_types and title.title_type not in select.title_types:

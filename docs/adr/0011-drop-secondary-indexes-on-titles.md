@@ -131,4 +131,8 @@ producing the same schema (see `schema.sql`'s comment at the removal site).
 - ADR-0003 — use the official IMDb datasets as the sole metadata source.
 - ADR-0010 — two-pass IMDb import (the other `titles`-shaping decision from the same
   work).
+- ADR-0019 — the "series -> episodes" follow-up named in *Risks* above:
+  `select.imdb_ids` naming a series now queries `parent_imdb_id`, and chose to defer
+  reinstating `idx_titles_parent` rather than assume it, pending an `EXPLAIN QUERY PLAN`
+  measurement.
 - CLAUDE.md §6, "No secondary index on `titles`".

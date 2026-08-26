@@ -132,7 +132,8 @@ class SelectConfig(_Base):
         default=None,
         description=(
             "Restricts the search to these titles, as the bare numeric part of their"
-            " IMDb id (`tt0133093` -> `133093`). `null` = the whole corpus."
+            " IMDb id (`tt0133093` -> `133093`). An id that identifies a TV series"
+            " expands to every one of its episodes. `null` = the whole corpus."
         ),
     )
 
