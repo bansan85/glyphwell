@@ -20,7 +20,7 @@ def test_loads_example_manifest(example_manifest: Path) -> None:
     """The shipped template must stay valid: it is the executable documentation of the format."""
     loaded = load(example_manifest)
     assert loaded.manifest.chunk.size == 150
-    assert loaded.manifest.chunk.overlap == 20
+    assert loaded.manifest.chunk.overlap == 12
     assert loaded.manifest.prefilter.mode is PrefilterMode.OFF
     assert loaded.manifest.output.json_schema is not None
     assert loaded.manifest.match_when == "matched"

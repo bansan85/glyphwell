@@ -8,11 +8,14 @@
 #
 # Launch:  uv run glyphwell search run searches/example.yaml --limit 20
 
-name: character_names
+name: concealment_methods
 description: >
-  Extracts the names of characters mentioned or addressed in the excerpt.
+  Analyzes excerpts of movie and TV show subtitles to identify specific methods,
+  techniques, and strategies used by perpetrators to conceal crimes, destroy evidence,
+  evade forensic detection, or mislead law enforcement investigations.
 
-# Ollama model. Must be available locally (`ollama pull fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b`):
+# Ollama model. Must be available locally
+# (`ollama pull fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b`):
 # the command checks this before scanning the corpus.
 model: fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b
 
@@ -23,8 +26,8 @@ model: fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b
 # worst-case latency per call and guards against runaway generation.
 options:
   temperature: 0
-  num_ctx: 12288
-  num_predict: 300
+  num_ctx: 24576
+  num_predict: 1000
 
 # --------------------------------------------------------------------------------------
 # Which subtitles to analyze
@@ -51,7 +54,7 @@ select:
 # `overlap` must stay strictly smaller than `size`.
 chunk:
   size: 150
-  overlap: 20
+  overlap: 12
 
 # --------------------------------------------------------------------------------------
 # Prefilter — evaluated locally, before any call to the model
@@ -83,14 +86,22 @@ prefilter:
 #   {{ chunk }}     the chunk's lines, prefixed with their identifier
 prompt:
   system: |
-    You analyze excerpts of movie and TV show subtitles.
-    You answer only with a JSON object matching the requested schema.
-    You only quote lines that are actually present in the excerpt provided.
-    You only list a character name when it is actually named in the excerpt, never
-    invented or inferred from context.
-    A character name is a proper name used to address or refer to a person (or
-    personified being), not a generic term like "sir", "mom", or "doctor" used alone.
-    When in doubt, answer matched: false.
+    You analyze excerpts of movie and TV subtitles for forensic research, forensic medicine analysis, and script realism verification.
+    Identify explicitly described, planned, or executed techniques used to conceal, cover up, or mask criminal acts, bodies, or evidence.
+
+    Classify each finding by concealment method:
+      01 body disposal, destruction, or alteration (e.g., chemical dissolution, dismemberment, burial, cremation);
+      02 chemical or physical forensic cleanup (e.g., bleaching, washing, removing biological evidence, staging scenes);
+      03 digital, electronic, or surveillance tampering (e.g., deleting logs, wiping drives, disabling cameras, spoofing);
+      04 evidence destruction or staging (e.g., arson, planting false evidence, altering weapon signatures);
+      05 alibi creation, falsification, or witness manipulation (e.g., coercion, forging records, time-of-death manipulation);
+      06 financial or identity concealment (e.g., shell companies, laundering techniques, stolen identities);
+      07 other forensic evasion or obstruction methods not elsewhere classified.
+
+    Do not report simple commission of crimes unless a specific method or technique of concealment, forensic evasion, or cover-up is explicitly described or discussed.
+
+    Quote only lines present in the excerpt.
+    Answer only with a JSON object matching the requested schema.
 
   user: |
     Title: {{ title }} ({{ year }}) — {{ imdb_id }}
@@ -98,9 +109,8 @@ prompt:
 
     {{ chunk }}
 
-    Does this excerpt name any character, whether they speak, are addressed, or are
-    merely referred to by name? List every such name mentioned.
-
+    Identify explicit methods or techniques used to conceal criminal acts or evade forensic detection.
+    If no concealment method is explicitly described, return "matched": false.
 # --------------------------------------------------------------------------------------
 # Expected output
 # --------------------------------------------------------------------------------------
@@ -113,22 +123,49 @@ output:
     properties:
       matched:
         type: boolean
-        description: True if the excerpt names at least one character.
-      confidence:
-        type: number
-        description: Confidence between 0 and 1.
-      character_names:
+        description: True only when at least one explicit crime concealment or forensic evasion method is found.
+      findings:
         type: array
-        description: Character names mentioned verbatim in the excerpt.
         items:
-          type: string
-      quotes:
-        type: array
-        description: Lines quoted verbatim from the excerpt.
-        items:
-          type: string
+          type: object
+          properties:
+            excerpt_ids:
+              type: array
+              items:
+                type: integer
+              description: Minimum set of line IDs necessary to support the finding. Every ID must refer to a line present in the excerpt.
+            concealment_category:
+              type: string
+              enum: ["01", "02", "03", "04", "05", "06", "07"]
+              description: The category of concealment or evasion technique identified.
+            method_description:
+              type: string
+              description: Concise summary in English of the specific concealment technique used or described.
+            excerpt:
+              type: string
+              description: Exact quoted subtitle text only, copied verbatim from the cited lines.
+          required:
+            - excerpt_ids
+            - excerpt
+            - concealment_category
+            - method_description
+          additionalProperties: false
     required: [matched]
     additionalProperties: false
+    allOf:
+      - if:
+          properties:
+            matched:
+              const: true
+        then:
+          required: [findings]
+      - if:
+          properties:
+            matched:
+              const: false
+        then:
+          not:
+            required: [findings]
 
 # Boolean field of the response that feeds the `results.matched` column, and therefore
 # what `glyphwell search export` keeps by default. `null`: every produced result counts
