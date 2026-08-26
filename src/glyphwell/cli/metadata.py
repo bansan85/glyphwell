@@ -16,7 +16,7 @@ from rich.progress import (
 
 from glyphwell.cli.context import get_context
 from glyphwell.console import console
-from glyphwell.db import connect, ensure_current
+from glyphwell.db import connect, ensure_catalog_current
 from glyphwell.db.repositories import ImportRow, ImportSource, ImportsRepository
 from glyphwell.http import make_client
 from glyphwell.metadata.imdb_datasets import (
@@ -86,8 +86,8 @@ def import_imdb(
     console.print(f"Basics:  {basics_path}")
     console.print(f"Episode: {episode_path}")
 
-    with connect(settings.database_path) as conn:
-        ensure_current(conn)
+    with connect(settings.catalog_database_path) as conn:
+        ensure_catalog_current(conn)
         imports = ImportsRepository(conn)
 
         basics_count = _import_with_progress(

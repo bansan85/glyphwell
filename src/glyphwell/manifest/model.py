@@ -128,9 +128,12 @@ class SelectConfig(_Base):
         description="IMDb types kept (movie, tvEpisode, tvSeries...). Empty = all.",
     )
     years: YearRange = YearRange()
-    imdb_ids: tuple[str, ...] | None = Field(
+    imdb_ids: tuple[int, ...] | None = Field(
         default=None,
-        description="Restricts the search to these titles. `null` = the whole corpus.",
+        description=(
+            "Restricts the search to these titles, as the bare numeric part of their"
+            " IMDb id (`tt0133093` -> `133093`). `null` = the whole corpus."
+        ),
     )
 
 

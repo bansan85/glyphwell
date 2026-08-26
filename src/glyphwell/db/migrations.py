@@ -1,55 +1,95 @@
 """Schema creation and versioning.
 
 The version lives in ``PRAGMA user_version``, which avoids an extra migration table.
-The initial schema is declared once and for all in ``schema.sql``; later changes are
-added to `_MIGRATIONS` as numbered steps.
+Two independent schemas, hence two independent version histories: the catalog database
+(``schema_catalog.sql``) and a search's run database (``schema_run.sql``) are separate
+files and never share a `PRAGMA user_version`. Each initial schema is declared once and
+for all in its ``.sql`` file; later changes to either are added to that schema's
+migration mapping as numbered steps.
 """
 
 import sqlite3
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from importlib import resources
 from typing import Final
 
 from glyphwell.errors import DatabaseError, SchemaVersionError
 from glyphwell.logging import get_logger
 
-__all__ = ["SCHEMA_VERSION", "current_version", "ensure_current", "initialize", "schema_sql"]
+__all__ = [
+    "CATALOG_SCHEMA_VERSION",
+    "RUN_SCHEMA_VERSION",
+    "catalog_schema_sql",
+    "current_version",
+    "ensure_catalog_current",
+    "ensure_run_current",
+    "initialize_catalog",
+    "initialize_run",
+    "run_schema_sql",
+]
 
 _log = get_logger(__name__)
 
-SCHEMA_VERSION: Final = 3
-"""Schema version expected by this code."""
+CATALOG_SCHEMA_VERSION: Final = 1
+"""Catalog schema version expected by this code."""
 
-# Migration steps to apply to go from version N-1 to version N.
-# Version 1 is produced by `schema.sql` and therefore does not appear here.
-_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {
-    # Drops the two `titles` indexes supporting a title/year -> imdb_id (or series ->
-    # episodes) lookup direction this project never uses. `schema.sql` no longer
-    # creates them for a fresh database; this brings an existing version-1 database in
-    # line. See the comment in schema.sql for why.
-    2: (
-        "DROP INDEX IF EXISTS idx_titles_parent",
-        "DROP INDEX IF EXISTS idx_titles_type_year",
-    ),
-    # Drops the per-file freshness checksum: a changed subtitle arrives under a new
-    # opensubtitles_file_id rather than mutating an existing one, so the hash never
-    # caught anything real, and nothing ever populated `run_files.file_sha256` in the
-    # first place. `schema.sql` no longer creates either column; this brings an
-    # existing database in line. See ADR-0015 (supersedes ADR-0006).
-    3: (
-        "ALTER TABLE subtitle_files DROP COLUMN sha256",
-        "ALTER TABLE run_files DROP COLUMN file_sha256",
-    ),
-}
+RUN_SCHEMA_VERSION: Final = 1
+"""Run schema version expected by this code."""
+
+# Migration steps to apply to go from version N-1 to version N. Version 1 is produced by
+# the schema's own `.sql` file and therefore does not appear here. Both histories start
+# fresh at 1: nothing has shipped with the old, single-database schema, so there is no
+# prior version to carry forward (see ADR-0018).
+_CATALOG_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
+_RUN_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
 
 
-def schema_sql() -> str:
-    """Returns the contents of ``schema.sql``, bundled with the package."""
-    return resources.files("glyphwell.db").joinpath("schema.sql").read_text(encoding="utf-8")
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _SchemaSpec:
+    """One schema's identity: its version, its migrations, and its `.sql` resource."""
+
+    version: int
+    migrations: Mapping[int, Sequence[str]]
+    resource_name: str
+    label: str
+
+
+_CATALOG_SCHEMA = _SchemaSpec(
+    version=CATALOG_SCHEMA_VERSION,
+    migrations=_CATALOG_MIGRATIONS,
+    resource_name="schema_catalog.sql",
+    label="catalog",
+)
+_RUN_SCHEMA = _SchemaSpec(
+    version=RUN_SCHEMA_VERSION,
+    migrations=_RUN_MIGRATIONS,
+    resource_name="schema_run.sql",
+    label="run",
+)
+
+
+def _schema_sql(resource_name: str) -> str:
+    """Returns the contents of a schema's `.sql` file, bundled with the package."""
+    return resources.files("glyphwell.db").joinpath(resource_name).read_text(encoding="utf-8")
+
+
+def catalog_schema_sql() -> str:
+    """Returns the contents of ``schema_catalog.sql``."""
+    return _schema_sql(_CATALOG_SCHEMA.resource_name)
+
+
+def run_schema_sql() -> str:
+    """Returns the contents of ``schema_run.sql``."""
+    return _schema_sql(_RUN_SCHEMA.resource_name)
 
 
 def current_version(conn: sqlite3.Connection) -> int:
-    """Schema version carried by the database. 0 for a fresh database."""
+    """Schema version carried by the database. 0 for a fresh database.
+
+    Kind-agnostic: `PRAGMA user_version` means the same thing regardless of which of the
+    two schemas the file holds.
+    """
     row = conn.execute("PRAGMA user_version").fetchone()
     if row is None:
         return 0
@@ -60,10 +100,10 @@ def current_version(conn: sqlite3.Connection) -> int:
     return version
 
 
-def initialize(conn: sqlite3.Connection) -> int:
-    """Creates or upgrades the schema, then returns the version reached.
+def _initialize(conn: sqlite3.Connection, spec: _SchemaSpec) -> int:
+    """Creates or upgrades a database against `spec`, then returns the version reached.
 
-    No-op if the database is already up to date: ``schema.sql`` only uses
+    No-op if the database is already up to date: the schema's `.sql` file only uses
     ``CREATE ... IF NOT EXISTS``, and migrations are applied only once.
 
     Raises:
@@ -71,47 +111,86 @@ def initialize(conn: sqlite3.Connection) -> int:
     """
     version = current_version(conn)
 
-    if version > SCHEMA_VERSION:
+    if version > spec.version:
         message = (
-            f"the database is at version {version}, this code only handles {SCHEMA_VERSION}. "
-            "Update glyphwell."
+            f"the {spec.label} database is at version {version}, this code only handles "
+            f"{spec.version}. Update glyphwell."
         )
         raise DatabaseError(message)
 
     if version == 0:
-        _log.info("creating schema (version %d)", SCHEMA_VERSION)
-        conn.executescript(schema_sql())
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        return SCHEMA_VERSION
+        _log.info("creating %s schema (version %d)", spec.label, spec.version)
+        conn.executescript(_schema_sql(spec.resource_name))
+        conn.execute(f"PRAGMA user_version = {spec.version}")
+        return spec.version
 
-    for target in range(version + 1, SCHEMA_VERSION + 1):
-        statements = _MIGRATIONS.get(target)
+    for target in range(version + 1, spec.version + 1):
+        statements = spec.migrations.get(target)
         if statements is None:
-            message = f"missing migration to version {target}"
+            message = f"missing {spec.label} migration to version {target}"
             raise DatabaseError(message)
-        _log.info("migration %d -> %d", target - 1, target)
+        _log.info("%s migration %d -> %d", spec.label, target - 1, target)
         conn.execute("BEGIN")
         for statement in statements:
             conn.execute(statement)
         conn.execute(f"PRAGMA user_version = {target}")
         conn.execute("COMMIT")
 
-    return SCHEMA_VERSION
+    return spec.version
 
 
-def ensure_current(conn: sqlite3.Connection) -> None:
-    """Checks that the database is exactly at `SCHEMA_VERSION`, without modifying anything.
+def initialize_catalog(conn: sqlite3.Connection) -> int:
+    """Creates or upgrades the catalog schema, then returns the version reached.
 
-    Call this at the start of commands that assume a schema is in place, to fail with a
-    useful message rather than on a missing table.
+    Raises:
+        DatabaseError: the database is newer than what this code knows how to read.
+    """
+    return _initialize(conn, _CATALOG_SCHEMA)
+
+
+def initialize_run(conn: sqlite3.Connection) -> int:
+    """Creates or upgrades a run schema, then returns the version reached.
+
+    Idempotent: ``search run`` calls this on every invocation, since a run database has
+    no separate init step.
+
+    Raises:
+        DatabaseError: the database is newer than what this code knows how to read.
+    """
+    return _initialize(conn, _RUN_SCHEMA)
+
+
+def _ensure_current(conn: sqlite3.Connection, spec: _SchemaSpec) -> None:
+    """Checks that the database is exactly at `spec.version`, without modifying anything.
 
     Raises:
         SchemaVersionError: version differs from the one expected.
     """
     version = current_version(conn)
-    if version != SCHEMA_VERSION:
+    if version != spec.version:
         message = (
-            f"schema version {version}, expected {SCHEMA_VERSION}. "
+            f"{spec.label} schema version {version}, expected {spec.version}. "
             "Run `glyphwell db init` to create or upgrade the database."
         )
         raise SchemaVersionError(message)
+
+
+def ensure_catalog_current(conn: sqlite3.Connection) -> None:
+    """Checks that the catalog database is exactly at `CATALOG_SCHEMA_VERSION`.
+
+    Call this at the start of commands that assume the catalog schema is in place, to
+    fail with a useful message rather than on a missing table.
+
+    Raises:
+        SchemaVersionError: version differs from the one expected.
+    """
+    _ensure_current(conn, _CATALOG_SCHEMA)
+
+
+def ensure_run_current(conn: sqlite3.Connection) -> None:
+    """Checks that a run database is exactly at `RUN_SCHEMA_VERSION`.
+
+    Raises:
+        SchemaVersionError: version differs from the one expected.
+    """
+    _ensure_current(conn, _RUN_SCHEMA)

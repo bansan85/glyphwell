@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from glyphwell.db import connect, initialize, open_connection
+from glyphwell.db import connect, initialize_catalog, open_connection
 
 
 def test_open_connection_raises_the_page_cache(tmp_path: Path) -> None:
@@ -21,7 +21,7 @@ def test_connect_checkpoints_the_wal_on_close(tmp_path: Path) -> None:
     """The WAL must not be left to grow unboundedly across CLI invocations."""
     path = tmp_path / "glyphwell.db"
     with connect(path, create=True) as conn:
-        initialize(conn)
+        initialize_catalog(conn)
         conn.execute("BEGIN")
         for value in range(500):
             conn.execute(

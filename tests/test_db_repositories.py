@@ -45,8 +45,8 @@ def _row(**overrides: str | None) -> CorpusDownloadRow:
     )
 
 
-def test_upsert_then_get(db: sqlite3.Connection) -> None:
-    repo = CorpusDownloadsRepository(db)
+def test_upsert_then_get(catalog_db: sqlite3.Connection) -> None:
+    repo = CorpusDownloadsRepository(catalog_db)
     download_id = repo.upsert(_row())
 
     found = repo.get(opus_corpus="OpenSubtitles", opus_version="v2018", language="en")
@@ -56,9 +56,9 @@ def test_upsert_then_get(db: sqlite3.Connection) -> None:
     assert found.downloaded_at is None
 
 
-def test_upsert_is_idempotent_on_the_natural_key(db: sqlite3.Connection) -> None:
+def test_upsert_is_idempotent_on_the_natural_key(catalog_db: sqlite3.Connection) -> None:
     """Rerunning `corpus fetch` must reuse the same row, not stack a second one."""
-    repo = CorpusDownloadsRepository(db)
+    repo = CorpusDownloadsRepository(catalog_db)
     first = repo.upsert(_row())
     second = repo.upsert(_row())
 
@@ -66,8 +66,8 @@ def test_upsert_is_idempotent_on_the_natural_key(db: sqlite3.Connection) -> None
     assert len(list(repo.iter_all())) == 1
 
 
-def test_mark_records_completion(db: sqlite3.Connection) -> None:
-    repo = CorpusDownloadsRepository(db)
+def test_mark_records_completion(catalog_db: sqlite3.Connection) -> None:
+    repo = CorpusDownloadsRepository(catalog_db)
     download_id = repo.upsert(_row())
 
     repo.mark(
@@ -87,9 +87,9 @@ def test_mark_records_completion(db: sqlite3.Connection) -> None:
     assert found.verified_at is not None
 
 
-def test_a_known_hash_survives_a_later_upsert(db: sqlite3.Connection) -> None:
+def test_a_known_hash_survives_a_later_upsert(catalog_db: sqlite3.Connection) -> None:
     """A checksum is not computed for free: overwriting it with `NULL` would lose it."""
-    repo = CorpusDownloadsRepository(db)
+    repo = CorpusDownloadsRepository(catalog_db)
     download_id = repo.upsert(_row())
     repo.mark(download_id, DownloadStatus.DOWNLOADED, sha256="cd" * 32)
 
@@ -101,8 +101,8 @@ def test_a_known_hash_survives_a_later_upsert(db: sqlite3.Connection) -> None:
     assert found.status is DownloadStatus.PENDING
 
 
-def test_failure_is_recorded(db: sqlite3.Connection) -> None:
-    repo = CorpusDownloadsRepository(db)
+def test_failure_is_recorded(catalog_db: sqlite3.Connection) -> None:
+    repo = CorpusDownloadsRepository(catalog_db)
     download_id = repo.upsert(_row())
 
     repo.mark(download_id, DownloadStatus.FAILED)
@@ -113,9 +113,9 @@ def test_failure_is_recorded(db: sqlite3.Connection) -> None:
     assert found.downloaded_at is None
 
 
-def test_versions_are_distinct_acquisitions(db: sqlite3.Connection) -> None:
+def test_versions_are_distinct_acquisitions(catalog_db: sqlite3.Connection) -> None:
     """Two releases of the same corpus coexist: the version is part of the key."""
-    repo = CorpusDownloadsRepository(db)
+    repo = CorpusDownloadsRepository(catalog_db)
     repo.upsert(_row())
     repo.upsert(_row(opus_version="v2024"))
 
@@ -127,7 +127,6 @@ def _movie(
     imdb_id: str = "tt0133093",
     title_type: str | None = "movie",
     primary_title: str | None = "The Matrix",
-    is_adult: bool = False,
     parent_imdb_id: str | None = None,
     season_number: int | None = None,
     episode_number: int | None = None,
@@ -139,37 +138,34 @@ def _movie(
         original_title=primary_title,
         start_year=1999,
         end_year=None,
-        is_adult=is_adult,
-        runtime_minutes=136,
         parent_imdb_id=parent_imdb_id,
         season_number=season_number,
         episode_number=episode_number,
     )
 
 
-def test_titles_upsert_then_get(db: sqlite3.Connection) -> None:
-    repo = TitlesRepository(db)
+def test_titles_upsert_then_get(catalog_db: sqlite3.Connection) -> None:
+    repo = TitlesRepository(catalog_db)
     repo.upsert_many([_movie()])
 
     found = repo.get("tt0133093")
     assert found is not None
     assert found.primary_title == "The Matrix"
-    assert found.is_adult is False
     assert repo.count() == 1
 
 
-def test_titles_get_of_unknown_id_is_none(db: sqlite3.Connection) -> None:
-    assert TitlesRepository(db).get("tt9999999") is None
+def test_titles_get_of_unknown_id_is_none(catalog_db: sqlite3.Connection) -> None:
+    assert TitlesRepository(catalog_db).get("tt9999999") is None
 
 
-def test_titles_upsert_does_not_clobber_the_episode_link(db: sqlite3.Connection) -> None:
+def test_titles_upsert_does_not_clobber_the_episode_link(catalog_db: sqlite3.Connection) -> None:
     """A later `import_basics` re-run must not erase what `import_episodes` wrote.
 
     `import_basics` never knows the parent/season/episode columns: it always sends
     `None` for them. If `upsert_many` overwrote unconditionally instead of coalescing,
     re-running `fetch-imdb` + `import-imdb` would silently unlink every episode.
     """
-    repo = TitlesRepository(db)
+    repo = TitlesRepository(catalog_db)
     repo.upsert_many([_movie(imdb_id="tt0041038", title_type="tvSeries")])
     repo.set_episode_links_many(
         [
@@ -192,9 +188,9 @@ def test_titles_upsert_does_not_clobber_the_episode_link(db: sqlite3.Connection)
     assert found.episode_number == 9
 
 
-def test_set_episode_links_many_requires_an_existing_title(db: sqlite3.Connection) -> None:
+def test_set_episode_links_many_requires_an_existing_title(catalog_db: sqlite3.Connection) -> None:
     """An episode's own row must already exist — `import_episodes` only updates."""
-    written = TitlesRepository(db).set_episode_links_many(
+    written = TitlesRepository(catalog_db).set_episode_links_many(
         [
             EpisodeLink(
                 imdb_id="tt9999999",
@@ -207,9 +203,11 @@ def test_set_episode_links_many_requires_an_existing_title(db: sqlite3.Connectio
     assert written == 0
 
 
-def test_set_episode_links_many_leaves_other_columns_untouched(db: sqlite3.Connection) -> None:
-    repo = TitlesRepository(db)
-    repo.upsert_many([_movie(imdb_id="tt0041038", title_type="tvEpisode", is_adult=True)])
+def test_set_episode_links_many_leaves_other_columns_untouched(
+    catalog_db: sqlite3.Connection,
+) -> None:
+    repo = TitlesRepository(catalog_db)
+    repo.upsert_many([_movie(imdb_id="tt0041038", title_type="tvEpisode")])
 
     repo.set_episode_links_many(
         [
@@ -224,12 +222,12 @@ def test_set_episode_links_many_leaves_other_columns_untouched(db: sqlite3.Conne
 
     found = repo.get("tt0041038")
     assert found is not None
-    assert found.is_adult is True
     assert found.title_type == "tvEpisode"
+    assert found.primary_title == "The Matrix"
 
 
-def test_imports_record_then_iter_all(db: sqlite3.Connection) -> None:
-    repo = ImportsRepository(db)
+def test_imports_record_then_iter_all(catalog_db: sqlite3.Connection) -> None:
+    repo = ImportsRepository(catalog_db)
     repo.record(
         ImportRow(source=ImportSource.BASICS, file_name="title.basics.tsv.gz", row_count=42)
     )
@@ -261,8 +259,8 @@ def _file_row(
     )
 
 
-def test_subtitle_files_upsert_then_get_by_path(db: sqlite3.Connection) -> None:
-    repo = SubtitleFilesRepository(db)
+def test_subtitle_files_upsert_then_get_by_path(catalog_db: sqlite3.Connection) -> None:
+    repo = SubtitleFilesRepository(catalog_db)
     file_id = repo.upsert(_file_row())
 
     found = repo.get_by_path(
@@ -286,103 +284,106 @@ def _run_id(conn: sqlite3.Connection, *, manifest_hash: str = "hash-a") -> int:
     )
 
 
-def test_runs_create_then_get(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    found = RunsRepository(db).get(run_id)
+def test_runs_create_then_get(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    found = RunsRepository(run_db).get(run_id)
     assert found is not None
     assert found.status is RunStatus.PENDING
     assert found.manifest_hash == "hash-a"
 
 
-def test_runs_get_manifest_snapshot(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    snapshot = RunsRepository(db).get_manifest_snapshot(run_id)
+def test_runs_get_manifest_snapshot(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    snapshot = RunsRepository(run_db).get_manifest_snapshot(run_id)
     assert snapshot == "name: a\nmodel: m\nprompt:\n  user: x\n"
-    assert RunsRepository(db).get_manifest_snapshot(run_id + 999) is None
+    assert RunsRepository(run_db).get_manifest_snapshot(run_id + 999) is None
 
 
-def test_runs_find_by_hash_most_recent_first(db: sqlite3.Connection) -> None:
-    repo = RunsRepository(db)
-    first = _run_id(db)
-    second = _run_id(db)
+def test_runs_find_by_hash_most_recent_first(run_db: sqlite3.Connection) -> None:
+    repo = RunsRepository(run_db)
+    first = _run_id(run_db)
+    second = _run_id(run_db)
     found = repo.find_by_hash("hash-a")
     assert [row.run_id for row in found] == [second, first]
 
 
-def test_runs_set_status_sets_and_clears_finished_at(db: sqlite3.Connection) -> None:
-    repo = RunsRepository(db)
-    run_id = _run_id(db)
+def test_runs_set_status_sets_and_clears_finished_at(run_db: sqlite3.Connection) -> None:
+    repo = RunsRepository(run_db)
+    run_id = _run_id(run_db)
 
     repo.set_status(run_id, RunStatus.DONE)
-    done = db.execute("SELECT finished_at FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    done = run_db.execute("SELECT finished_at FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     assert done["finished_at"] is not None
     after_done = repo.get(run_id)
     assert after_done is not None
     assert after_done.status is RunStatus.DONE
 
     repo.set_status(run_id, RunStatus.RUNNING)
-    running = db.execute("SELECT finished_at FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    running = run_db.execute("SELECT finished_at FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     assert running["finished_at"] is None
 
 
-def test_runs_list_all_most_recent_first(db: sqlite3.Connection) -> None:
-    repo = RunsRepository(db)
-    first = _run_id(db, manifest_hash="hash-a")
-    second = _run_id(db, manifest_hash="hash-b")
+def test_runs_list_all_most_recent_first(run_db: sqlite3.Connection) -> None:
+    repo = RunsRepository(run_db)
+    first = _run_id(run_db, manifest_hash="hash-a")
+    second = _run_id(run_db, manifest_hash="hash-b")
     assert [row.run_id for row in repo.list_all()] == [second, first]
 
 
-def test_run_files_enqueue_many_counts_only_new_rows(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    subtitle_files = SubtitleFilesRepository(db)
-    file_a = subtitle_files.upsert(_file_row(opensubtitles_file_id="1", rel_path="a/1.xml"))
-    file_b = subtitle_files.upsert(_file_row(opensubtitles_file_id="2", rel_path="a/2.xml"))
-    repo = RunFilesRepository(db)
+def test_runs_unfinished_excludes_done(run_db: sqlite3.Connection) -> None:
+    repo = RunsRepository(run_db)
+    done_run = _run_id(run_db, manifest_hash="hash-a")
+    pending_run = _run_id(run_db, manifest_hash="hash-b")
+    repo.set_status(done_run, RunStatus.DONE)
 
-    assert repo.enqueue_many(run_id, [file_a]) == 1
-    assert repo.enqueue_many(run_id, [file_a, file_b]) == 1
+    assert [row.run_id for row in repo.unfinished()] == [pending_run]
+
+
+def test_run_files_enqueue_many_counts_only_new_rows(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    repo = RunFilesRepository(run_db)
+
+    assert repo.enqueue_many(run_id, [(1, "a/1.xml")]) == 1
+    assert repo.enqueue_many(run_id, [(1, "a/1.xml"), (2, "a/2.xml")]) == 1
 
 
 def test_run_files_iter_pending_excludes_terminal_statuses_and_orders_by_rel_path(
-    db: sqlite3.Connection,
+    run_db: sqlite3.Connection,
 ) -> None:
-    run_id = _run_id(db)
-    subtitle_files = SubtitleFilesRepository(db)
-    file_b = subtitle_files.upsert(_file_row(opensubtitles_file_id="2", rel_path="b/2.xml"))
-    file_a = subtitle_files.upsert(_file_row(opensubtitles_file_id="1", rel_path="a/1.xml"))
-    file_c = subtitle_files.upsert(_file_row(opensubtitles_file_id="3", rel_path="c/3.xml"))
-    repo = RunFilesRepository(db)
-    repo.enqueue_many(run_id, [file_a, file_b, file_c])
-    repo.mark_done(run_id, file_c)
+    run_id = _run_id(run_db)
+    repo = RunFilesRepository(run_db)
+    repo.enqueue_many(run_id, [(2, "b/2.xml"), (1, "a/1.xml"), (3, "c/3.xml")])
+    repo.mark_done(run_id, 3)
 
     pending = list(repo.iter_pending(run_id))
-    assert [row.file_id for row in pending] == [file_a, file_b]
+    assert [row.file_id for row in pending] == [1, 2]
+    assert [row.rel_path for row in pending] == ["a/1.xml", "b/2.xml"]
 
 
-def test_run_files_mark_started_sets_started_at_once(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    repo = RunFilesRepository(db)
-    repo.enqueue_many(run_id, [file_id])
+def test_run_files_mark_started_sets_started_at_once(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    repo = RunFilesRepository(run_db)
+    repo.enqueue_many(run_id, [(file_id, "a/1.xml")])
 
     repo.mark_started(run_id, file_id)
-    first = db.execute(
+    first = run_db.execute(
         "SELECT started_at FROM run_files WHERE run_id = ? AND file_id = ?", (run_id, file_id)
     ).fetchone()["started_at"]
     assert first is not None
 
     repo.mark_started(run_id, file_id)
-    second = db.execute(
+    second = run_db.execute(
         "SELECT started_at FROM run_files WHERE run_id = ? AND file_id = ?", (run_id, file_id)
     ).fetchone()["started_at"]
     assert second == first
 
 
-def test_run_files_mark_error_keeps_the_cursor(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    repo = RunFilesRepository(db)
-    repo.enqueue_many(run_id, [file_id])
+def test_run_files_mark_error_keeps_the_cursor(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    repo = RunFilesRepository(run_db)
+    repo.enqueue_many(run_id, [(file_id, "a/1.xml")])
     repo.advance(run_id, file_id, last_sentence_index=9, last_sentence_id="s9", chunks_done=1)
 
     repo.mark_error(run_id, file_id, "boom")
@@ -395,11 +396,11 @@ def test_run_files_mark_error_keeps_the_cursor(db: sqlite3.Connection) -> None:
     assert row.chunks_done == 1
 
 
-def test_run_files_advance_flips_pending_to_in_progress(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    repo = RunFilesRepository(db)
-    repo.enqueue_many(run_id, [file_id])
+def test_run_files_advance_flips_pending_to_in_progress(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    repo = RunFilesRepository(run_db)
+    repo.enqueue_many(run_id, [(file_id, "a/1.xml")])
 
     repo.advance(run_id, file_id, last_sentence_index=1, last_sentence_id="s1", chunks_done=1)
 
@@ -410,12 +411,11 @@ def test_run_files_advance_flips_pending_to_in_progress(db: sqlite3.Connection) 
     assert row.last_sentence_id == "s1"
 
 
-def test_run_files_progress_reports_every_status_with_zeros(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    RunFilesRepository(db).enqueue_many(run_id, [file_id])
+def test_run_files_progress_reports_every_status_with_zeros(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    RunFilesRepository(run_db).enqueue_many(run_id, [(1, "a/1.xml")])
 
-    progress = RunFilesRepository(db).progress(run_id)
+    progress = RunFilesRepository(run_db).progress(run_id)
 
     assert progress == {
         FileStatus.PENDING: 1,
@@ -448,11 +448,11 @@ def _result_row(
     )
 
 
-def test_results_insert_ignore_is_idempotent(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    RunFilesRepository(db).enqueue_many(run_id, [file_id])
-    repo = ResultsRepository(db)
+def test_results_insert_ignore_is_idempotent(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    RunFilesRepository(run_db).enqueue_many(run_id, [(file_id, "a/1.xml")])
+    repo = ResultsRepository(run_db)
     row = _result_row(run_id=run_id, file_id=file_id)
 
     assert repo.insert_ignore(row) is True
@@ -460,11 +460,11 @@ def test_results_insert_ignore_is_idempotent(db: sqlite3.Connection) -> None:
     assert repo.count(run_id) == 1
 
 
-def test_results_payload_round_trips_through_json(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    RunFilesRepository(db).enqueue_many(run_id, [file_id])
-    repo = ResultsRepository(db)
+def test_results_payload_round_trips_through_json(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    RunFilesRepository(run_db).enqueue_many(run_id, [(file_id, "a/1.xml")])
+    repo = ResultsRepository(run_db)
     repo.insert_ignore(
         _result_row(run_id=run_id, file_id=file_id, payload={"matched": True, "n": 3})
     )
@@ -474,11 +474,11 @@ def test_results_payload_round_trips_through_json(db: sqlite3.Connection) -> Non
     assert matches[0].payload == {"matched": True, "n": 3}
 
 
-def test_results_count_matched_only(db: sqlite3.Connection) -> None:
-    run_id = _run_id(db)
-    file_id = SubtitleFilesRepository(db).upsert(_file_row())
-    RunFilesRepository(db).enqueue_many(run_id, [file_id])
-    repo = ResultsRepository(db)
+def test_results_count_matched_only(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    file_id = 1
+    RunFilesRepository(run_db).enqueue_many(run_id, [(file_id, "a/1.xml")])
+    repo = ResultsRepository(run_db)
     repo.insert_ignore(_result_row(run_id=run_id, file_id=file_id, chunk_index=0, matched=True))
     repo.insert_ignore(_result_row(run_id=run_id, file_id=file_id, chunk_index=1, matched=False))
 

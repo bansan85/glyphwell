@@ -38,7 +38,7 @@ select:
   years:
     min: null
     max: null
-  imdb_ids: null # or an explicit list: ["tt0133093"]
+  imdb_ids: null # null or an explicit list of bare numeric ids: [133093]
 
 # --------------------------------------------------------------------------------------
 # Chunking — unit of model calls AND unit of resuming

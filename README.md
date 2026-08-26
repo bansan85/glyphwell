@@ -74,7 +74,7 @@ uv run glyphwell corpus fetch --corpus Books --language en --version latest
 All commands go through `uv run`.
 
 ```bash
-# Database
+# Catalog database (corpus + IMDb data, immutable once fetched)
 uv run glyphwell db init                  # creates the schema
 uv run glyphwell db status                # schema version + counters
 uv run glyphwell db vacuum
@@ -87,11 +87,11 @@ uv run glyphwell corpus index                        # archive scan -> SQLite
 uv run glyphwell metadata fetch-imdb                 # official IMDb datasets
 uv run glyphwell metadata import-imdb                # import into SQLite
 
-# Search
+# Search — each run produces its own run database (data/example.db by default)
 uv run glyphwell search run searches/example.yaml
-uv run glyphwell search status
-uv run glyphwell search resume 1
-uv run glyphwell search export 1 --format jsonl
+uv run glyphwell search status data/example.db
+uv run glyphwell search resume data/example.db
+uv run glyphwell search export data/example.db --format jsonl
 ```
 
 ## Writing a search

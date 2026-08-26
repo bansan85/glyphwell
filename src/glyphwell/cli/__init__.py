@@ -55,12 +55,12 @@ def root(
             envvar="GLYPHWELL_DATA_DIR",
         ),
     ] = None,
-    database: Annotated[
+    catalog_database: Annotated[
         Path | None,
         typer.Option(
-            "--database",
-            help="Path to the SQLite database. Default: <data-dir>/glyphwell.db",
-            envvar="GLYPHWELL_DATABASE",
+            "--catalog-database",
+            help="Path to the catalog SQLite database. Default: <data-dir>/glyphwell.db",
+            envvar="GLYPHWELL_CATALOG_DATABASE",
         ),
     ] = None,
     log_level: Annotated[
@@ -95,7 +95,9 @@ def root(
     from_env = Settings()
     settings = Settings(
         data_dir=from_env.data_dir if data_dir is None else data_dir,
-        database=from_env.database if database is None else database,
+        catalog_database=(
+            from_env.catalog_database if catalog_database is None else catalog_database
+        ),
         log_level=from_env.log_level if log_level is None else log_level,
         # The flag can only *disable* verification, never re-enable what
         # `GLYPHWELL_VERIFY_TLS=false` already gave up on: unlike the options above, its

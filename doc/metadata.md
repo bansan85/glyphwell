@@ -25,8 +25,9 @@ The [official IMDb non-commercial datasets](https://datasets.imdbws.com/), repub
 daily, no API key. Two files are enough — see ADR-0003 for why they were chosen over a
 third-party source such as TMDB:
 
-- `title.basics.tsv.gz` — `tconst`, type, primary/original title, year(s), adult flag,
-  runtime.
+- `title.basics.tsv.gz` — `tconst`, type, primary/original title, year(s). The file also
+  carries an adult flag, a runtime, and genres; `glyphwell` reads but doesn't store them,
+  since nothing consults them.
 - `title.episode.tsv.gz` — `tconst`, `parentTconst`, season number, episode number.
 
 The join key, `tconst`, is exactly the (bare) IMDb identifier the corpus tree already
@@ -59,8 +60,7 @@ overwrite what the other one knows:
   coalesces the parent/season/episode columns against whatever is already stored — a
   re-import can't blank out a link.
 - `import_episodes` only ever updates `parent_imdb_id`, `season_number`, and
-  `episode_number` on a row that must already exist. It never touches, and never has to
-  invent a value for, columns such as the non-nullable adult flag.
+  `episode_number` on a row that must already exist. It never touches any other column.
 
 See ADR-0010 for the full reasoning and the options that were ruled out. One consequence
 worth knowing: **run order matters**. If `import_episodes` runs for a `tconst` that
@@ -96,9 +96,9 @@ throughput and to degrade further as the table grows.
 
 In practice the dominant remaining cost is disk write latency, not Python: on a
 mechanical (HDD) disk, commit latency alone can keep the import close to an order of
-magnitude slower than on an SSD. If `import-imdb` feels slow, point `--database` (or
-`GLYPHWELL_DATABASE`) at your fastest local disk — the source `.tsv` files can stay
-wherever they were downloaded, since reading them is sequential.
+magnitude slower than on an SSD. If `import-imdb` feels slow, point `--catalog-database`
+(or `GLYPHWELL_CATALOG_DATABASE`) at your fastest local disk — the source `.tsv` files can
+stay wherever they were downloaded, since reading them is sequential.
 
 ## Troubleshooting
 

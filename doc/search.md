@@ -49,6 +49,24 @@ The manifest's `select` filters matched the corpus's very first file, a music-vi
 subtitle — a reminder that `select`/the pre-filter are what keep an unrelated file from
 costing a model call, not the manifest's prompt.
 
+## Catalog vs. run database
+
+Every command in this step reads two SQLite databases (see
+[ADR-0018](../docs/adr/0018-split-catalog-and-run-databases.md)):
+
+- The **catalog database** (`glyphwell.db` by default, `--catalog-database` /
+  `GLYPHWELL_CATALOG_DATABASE`) — corpus and IMDb data, immutable once fetched, shared by
+  every search.
+- A **run database**, one per search — `runs`, `run_files`, `results`. `search run`
+  creates it automatically (default: `<data-dir>/<manifest filename>.db`, e.g.
+  `data/ski_pistes.db` for `searches/ski_pistes.yaml`), overridable with `--run-database`
+  / `GLYPHWELL_RUN_DATABASE`. There is no separate init step for it.
+
+`search resume`, `search status`, and `search export` take the **run database's file
+path** as their argument, not a numeric id: that file, together with the manifest
+snapshot it already carries (`runs.manifest_snapshot`), is the complete, durable handle
+for a search — it works even if the original YAML has since changed or been deleted.
+
 ## Cataloguing the corpus (`corpus index`)
 
 `corpus index` walks the archive's members via `corpus/layout.py::iter_corpus` and
@@ -146,6 +164,6 @@ often.
 
 ## What's next
 
-`search resume`, `search status`, and `search export` are wired into the CLI and
-typecheck, but their bodies are not written yet — see the changelog's *Known
-limitations*.
+`search resume` and `search status` are operational (see *Catalog vs. run database*
+above for how they locate a search). `search export` is wired into the CLI and
+typechecks, but its body is not written yet — see the changelog's *Known limitations*.

@@ -7,12 +7,11 @@ from typer.testing import CliRunner
 
 from glyphwell.cli import app
 from glyphwell.config import Settings
-from glyphwell.db import connect, initialize
+from glyphwell.db import connect, initialize_catalog
 from glyphwell.db.repositories import (
     CorpusDownloadRow,
     CorpusDownloadsRepository,
     DownloadStatus,
-    RunsRepository,
     TitleRow,
     TitlesRepository,
 )
@@ -30,8 +29,8 @@ def _build_archive(path: Path) -> None:
 
 
 def _seed(settings: Settings, archive_path: Path) -> None:
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
+    with connect(settings.catalog_database_path, create=True) as conn:
+        initialize_catalog(conn)
         CorpusDownloadsRepository(conn).upsert(
             CorpusDownloadRow(
                 opus_corpus=settings.opus_corpus,
@@ -52,8 +51,6 @@ def _seed(settings: Settings, archive_path: Path) -> None:
                     original_title=None,
                     start_year=1999,
                     end_year=None,
-                    is_adult=False,
-                    runtime_minutes=None,
                     parent_imdb_id=None,
                     season_number=None,
                     episode_number=None,
@@ -94,8 +91,9 @@ def test_dry_run_renders_a_real_chunk_without_touching_the_database(tmp_path: Pa
     assert "test-model" in result.output
     assert "Ski Trip" in result.output
 
-    with connect(settings.database_path) as conn:
-        assert RunsRepository(conn).list_all() == []
+    # `--dry-run` never creates a run database: the default one (derived from the
+    # manifest's filename) must not exist.
+    assert not (data_dir / "manifest.db").exists()
 
 
 def test_dry_run_without_a_match_fails_cleanly(tmp_path: Path) -> None:

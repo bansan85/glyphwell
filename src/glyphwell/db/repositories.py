@@ -10,11 +10,13 @@ import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Final
 
 from pydantic import TypeAdapter
 
+from glyphwell.corpus.layout import imdb_id_from_int, imdb_id_to_int
 from glyphwell.types import (
     ImdbId,
     JsonObject,
@@ -101,8 +103,6 @@ class TitleRow:
     original_title: str | None
     start_year: int | None
     end_year: int | None
-    is_adult: bool
-    runtime_minutes: int | None
     parent_imdb_id: ImdbId | None
     season_number: int | None
     episode_number: int | None
@@ -114,8 +114,8 @@ class EpisodeLink:
 
     Deliberately separate from `TitleRow`: attaching an episode only ever touches three
     columns of an already-existing row. Routing it through `TitleRow` and `upsert_many`
-    would force every other column — starting with the non-nullable `is_adult` — back to
-    a default, silently erasing what `import_basics` had already written.
+    would force every other column back to a default, silently erasing what
+    `import_basics` had already written.
     """
 
     imdb_id: ImdbId
@@ -159,6 +159,7 @@ class RunFileRow:
 
     run_id: int
     file_id: int
+    rel_path: str
     status: FileStatus
     last_sentence_index: int | None
     last_sentence_id: str | None
@@ -198,8 +199,8 @@ class CorpusDownloadRow:
     archive_path: str | None
     sha256: Sha256 | None
     status: DownloadStatus
-    downloaded_at: str | None = None
-    verified_at: str | None = None
+    downloaded_at: datetime | None = None
+    verified_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -214,7 +215,7 @@ class ImportRow:
     file_name: str
     released_at: str | None = None
     row_count: int | None = None
-    imported_at: str | None = None
+    imported_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +226,9 @@ class TitlesRepository:
 
     def get(self, imdb_id: ImdbId) -> TitleRow | None:
         """Returns the title, or `None` if it has not been imported."""
-        found = self.conn.execute("SELECT * FROM titles WHERE imdb_id = ?", (imdb_id,)).fetchone()
+        found = self.conn.execute(
+            "SELECT * FROM titles WHERE imdb_id = ?", (imdb_id_to_int(imdb_id),)
+        ).fetchone()
         return None if found is None else _to_title_row(found)
 
     def upsert_many(self, rows: Sequence[TitleRow]) -> int:
@@ -241,30 +244,26 @@ class TitlesRepository:
         cursor = self.conn.executemany(
             "INSERT INTO titles"
             " (imdb_id, title_type, primary_title, original_title, start_year, end_year,"
-            "  is_adult, runtime_minutes, parent_imdb_id, season_number, episode_number)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "  parent_imdb_id, season_number, episode_number)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (imdb_id) DO UPDATE SET"
             "     title_type = coalesce(excluded.title_type, titles.title_type),"
             "     primary_title = coalesce(excluded.primary_title, titles.primary_title),"
             "     original_title = coalesce(excluded.original_title, titles.original_title),"
             "     start_year = coalesce(excluded.start_year, titles.start_year),"
             "     end_year = coalesce(excluded.end_year, titles.end_year),"
-            "     is_adult = excluded.is_adult,"
-            "     runtime_minutes = coalesce(excluded.runtime_minutes, titles.runtime_minutes),"
             "     parent_imdb_id = coalesce(excluded.parent_imdb_id, titles.parent_imdb_id),"
             "     season_number = coalesce(excluded.season_number, titles.season_number),"
             "     episode_number = coalesce(excluded.episode_number, titles.episode_number)",
             [
                 (
-                    row.imdb_id,
+                    imdb_id_to_int(row.imdb_id),
                     row.title_type,
                     row.primary_title,
                     row.original_title,
                     row.start_year,
                     row.end_year,
-                    int(row.is_adult),
-                    row.runtime_minutes,
-                    row.parent_imdb_id,
+                    None if row.parent_imdb_id is None else imdb_id_to_int(row.parent_imdb_id),
                     row.season_number,
                     row.episode_number,
                 )
@@ -286,7 +285,12 @@ class TitlesRepository:
             "UPDATE titles SET parent_imdb_id = ?, season_number = ?, episode_number = ?"
             " WHERE imdb_id = ?",
             [
-                (link.parent_imdb_id, link.season_number, link.episode_number, link.imdb_id)
+                (
+                    imdb_id_to_int(link.parent_imdb_id),
+                    link.season_number,
+                    link.episode_number,
+                    imdb_id_to_int(link.imdb_id),
+                )
                 for link in links
             ],
         )
@@ -326,14 +330,13 @@ class SubtitleFilesRepository:
             "     year = coalesce(excluded.year, subtitle_files.year),"
             "     size_bytes = coalesce(excluded.size_bytes, subtitle_files.size_bytes),"
             "     sentence_count ="
-            "         coalesce(excluded.sentence_count, subtitle_files.sentence_count),"
-            "     updated_at = datetime('now')"
+            "         coalesce(excluded.sentence_count, subtitle_files.sentence_count)"
             " RETURNING file_id",
             (
                 row.opus_version,
                 row.language,
-                row.imdb_id,
-                row.opensubtitles_file_id,
+                imdb_id_to_int(row.imdb_id),
+                int(row.opensubtitles_file_id),
                 row.rel_path,
                 row.year,
                 row.size_bytes,
@@ -443,6 +446,17 @@ class RunsRepository:
         ).fetchall()
         return [_to_run_row(row) for row in rows]
 
+    def unfinished(self) -> Sequence[RunRow]:
+        """Searches not yet `done`, most recent first.
+
+        Used by ``search resume``, which takes no `run_id` on the CLI: the run database
+        is expected to hold at most one candidate — see `cli/search.py`.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM runs WHERE status != 'done' ORDER BY created_at DESC, run_id DESC"
+        ).fetchall()
+        return [_to_run_row(row) for row in rows]
+
 
 @dataclass(frozen=True, slots=True)
 class RunFilesRepository:
@@ -450,17 +464,21 @@ class RunFilesRepository:
 
     conn: sqlite3.Connection
 
-    def enqueue_many(self, run_id: int, file_ids: Sequence[int]) -> int:
+    def enqueue_many(self, run_id: int, files: Sequence[tuple[int, str]]) -> int:
         """Adds files to the queue, without overwriting those already present.
+
+        `files` pairs a catalog `file_id` with its `rel_path`, duplicated here so the
+        queue's deterministic order is computable without a cross-database join back to
+        the catalog (see `glyphwell.search.planner`).
 
         Idempotent: reusable to complete the queue of an existing run when new files
         appear in the corpus.
         """
-        if not file_ids:
+        if not files:
             return 0
         cursor = self.conn.executemany(
-            "INSERT OR IGNORE INTO run_files (run_id, file_id) VALUES (?, ?)",
-            [(run_id, file_id) for file_id in file_ids],
+            "INSERT OR IGNORE INTO run_files (run_id, file_id, rel_path) VALUES (?, ?, ?)",
+            [(run_id, file_id, rel_path) for file_id, rel_path in files],
         )
         return cursor.rowcount
 
@@ -472,10 +490,8 @@ class RunFilesRepository:
         broken file needs a deliberate recovery action, not a silent retry on every resume.
         """
         for found in self.conn.execute(
-            "SELECT run_files.* FROM run_files"
-            " JOIN subtitle_files ON subtitle_files.file_id = run_files.file_id"
-            " WHERE run_files.run_id = ? AND run_files.status IN ('pending', 'in_progress')"
-            " ORDER BY subtitle_files.rel_path",
+            "SELECT * FROM run_files WHERE run_id = ? AND status IN ('pending', 'in_progress')"
+            " ORDER BY rel_path",
             (run_id,),
         ):
             yield _to_run_file_row(found)
@@ -710,8 +726,12 @@ def _to_download_row(row: sqlite3.Row) -> CorpusDownloadRow:
         archive_path=None if row["archive_path"] is None else str(row["archive_path"]),
         sha256=None if row["sha256"] is None else str(row["sha256"]),
         status=DownloadStatus(row["status"]),
-        downloaded_at=None if row["downloaded_at"] is None else str(row["downloaded_at"]),
-        verified_at=None if row["verified_at"] is None else str(row["verified_at"]),
+        downloaded_at=(
+            None if row["downloaded_at"] is None else datetime.fromisoformat(row["downloaded_at"])
+        ),
+        verified_at=(
+            None if row["verified_at"] is None else datetime.fromisoformat(row["verified_at"])
+        ),
     )
 
 
@@ -742,15 +762,15 @@ class ImportsRepository:
 def _to_title_row(row: sqlite3.Row) -> TitleRow:
     """Translates a row of `titles`."""
     return TitleRow(
-        imdb_id=str(row["imdb_id"]),
+        imdb_id=imdb_id_from_int(int(row["imdb_id"])),
         title_type=None if row["title_type"] is None else str(row["title_type"]),
         primary_title=None if row["primary_title"] is None else str(row["primary_title"]),
         original_title=None if row["original_title"] is None else str(row["original_title"]),
         start_year=None if row["start_year"] is None else int(row["start_year"]),
         end_year=None if row["end_year"] is None else int(row["end_year"]),
-        is_adult=bool(row["is_adult"]),
-        runtime_minutes=None if row["runtime_minutes"] is None else int(row["runtime_minutes"]),
-        parent_imdb_id=None if row["parent_imdb_id"] is None else str(row["parent_imdb_id"]),
+        parent_imdb_id=(
+            None if row["parent_imdb_id"] is None else imdb_id_from_int(int(row["parent_imdb_id"]))
+        ),
         season_number=None if row["season_number"] is None else int(row["season_number"]),
         episode_number=None if row["episode_number"] is None else int(row["episode_number"]),
     )
@@ -764,7 +784,9 @@ def _to_import_row(row: sqlite3.Row) -> ImportRow:
         file_name=str(row["file_name"]),
         released_at=None if row["released_at"] is None else str(row["released_at"]),
         row_count=None if row["row_count"] is None else int(row["row_count"]),
-        imported_at=None if row["imported_at"] is None else str(row["imported_at"]),
+        imported_at=(
+            None if row["imported_at"] is None else datetime.fromisoformat(row["imported_at"])
+        ),
     )
 
 
@@ -774,7 +796,7 @@ def _to_subtitle_file_row(row: sqlite3.Row) -> SubtitleFileRow:
         file_id=int(row["file_id"]),
         opus_version=str(row["opus_version"]),
         language=str(row["language"]),
-        imdb_id=str(row["imdb_id"]),
+        imdb_id=imdb_id_from_int(int(row["imdb_id"])),
         opensubtitles_file_id=str(row["opensubtitles_file_id"]),
         rel_path=str(row["rel_path"]),
         year=None if row["year"] is None else int(row["year"]),
@@ -799,6 +821,7 @@ def _to_run_file_row(row: sqlite3.Row) -> RunFileRow:
     return RunFileRow(
         run_id=int(row["run_id"]),
         file_id=int(row["file_id"]),
+        rel_path=str(row["rel_path"]),
         status=FileStatus(row["status"]),
         last_sentence_index=(
             None if row["last_sentence_index"] is None else int(row["last_sentence_index"])

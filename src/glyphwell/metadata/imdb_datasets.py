@@ -2,7 +2,8 @@
 
 Two files are enough:
 
-* ``title.basics.tsv.gz``: type, title, year, runtime, adult flag, genres;
+* ``title.basics.tsv.gz``: type, title, year (``runtime``/``isAdult``/``genres`` are
+  present in the file but not stored — nothing in `glyphwell` consults them);
 * ``title.episode.tsv.gz``: an episode's link to its series, season, number.
 
 They are **indexed by ``tconst``**, exactly the identifier carried by the OPUS corpus
@@ -318,10 +319,8 @@ def _basics_rows(path: Path, *, progress: ProgressCallback | None = None) -> Ite
     i_type = _column_index(fieldnames, "titleType", path)
     i_primary = _column_index(fieldnames, "primaryTitle", path)
     i_original = _column_index(fieldnames, "originalTitle", path)
-    i_adult = _column_index(fieldnames, "isAdult", path)
     i_start = _column_index(fieldnames, "startYear", path)
     i_end = _column_index(fieldnames, "endYear", path)
-    i_runtime = _column_index(fieldnames, "runtimeMinutes", path)
     try:
         for row_number, values in source.rows:
             tconst = values[i_tconst]
@@ -336,8 +335,6 @@ def _basics_rows(path: Path, *, progress: ProgressCallback | None = None) -> Ite
                     original_title=_or_none(values[i_original]),
                     start_year=_int_or_none(values[i_start]),
                     end_year=_int_or_none(values[i_end]),
-                    is_adult=values[i_adult] == "1",
-                    runtime_minutes=_int_or_none(values[i_runtime]),
                     parent_imdb_id=None,
                     season_number=None,
                     episode_number=None,

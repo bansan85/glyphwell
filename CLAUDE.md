@@ -208,7 +208,10 @@ IMDb datasets already give exactly.
 
 - `https://datasets.imdbws.com/title.basics.tsv.gz` gives `tconst`, `titleType`,
   `primaryTitle`, `originalTitle`, `isAdult`, `startYear`, `endYear`, `runtimeMinutes`,
-  `genres`.
+  `genres`. `import_basics` only stores `tconst`/`titleType`/`primaryTitle`/
+  `originalTitle`/`startYear`/`endYear`: `isAdult`/`runtimeMinutes`/`genres` are read from
+  the TSV (IMDb's own column set, not ours to change) but never consulted anywhere in the
+  project, so they aren't written to `titles` (see ADR-0018).
 - `https://datasets.imdbws.com/title.episode.tsv.gz` gives `tconst`, `parentTconst`,
   `seasonNumber`, `episodeNumber`.
 - TSV, **`\N` = null value** (not an empty string). Direct join on `tconst`,
@@ -250,9 +253,9 @@ IMDb datasets already give exactly.
   the identical workload: on the full ~22M-row catalog (see
   [doc/metadata.md#performance](doc/metadata.md#performance)), that's roughly
   **~39 minutes** on an HDD against **~6 minutes** on an SSD. If `import-imdb` is slow,
-  check where `--database` / `GLYPHWELL_DATABASE` points before touching the code
-  again — the source `.tsv`/`.tsv.gz` files themselves can stay on slower storage,
-  since reading them is sequential.
+  check where `--catalog-database` / `GLYPHWELL_CATALOG_DATABASE` points before touching
+  the code again — the source `.tsv`/`.tsv.gz` files themselves can stay on slower
+  storage, since reading them is sequential.
 
 What the IMDb datasets don't give: any popularity measure. If a filter like that becomes
 necessary, the IMDb-native route is `title.ratings.tsv.gz` (`averageRating`, `numVotes`),
@@ -260,13 +263,15 @@ also indexed by `tconst` — not a third-party source.
 
 - **Two-pass import, not a single upsert.** `import_basics` never knows an episode's
   parent/season/episode (that only exists in `title.episode.tsv`), and `import_episodes`
-  never knows the rest of a title's columns — including the non-nullable `is_adult`.
-  `TitlesRepository.upsert_many` (used by `import_basics`) coalesces every nullable column
-  so a re-import can't blank out a link written by `import_episodes`; the reverse direction
-  goes through the dedicated `set_episode_links_many` (a plain `UPDATE`, not an upsert) so
-  it never has to invent a value for `is_adult`. `import_episodes` must run after
-  `import_basics`: an episode's own row has to exist already, since `set_episode_links_many`
-  only updates, never inserts.
+  never knows the rest of a title's columns. `TitlesRepository.upsert_many` (used by
+  `import_basics`) coalesces every nullable column so a re-import can't blank out a link
+  written by `import_episodes`; the reverse direction goes through the dedicated
+  `set_episode_links_many` (a plain `UPDATE`, not an upsert) so it never touches a column
+  it has no data for. `import_episodes` must run after `import_basics`: an episode's own
+  row has to exist already, since `set_episode_links_many` only updates, never inserts.
+  (ADR-0010's own reasoning cites `is_adult` as a non-nullable column neither pass could
+  safely invent a value for; that column was later dropped — see ADR-0018 — but the
+  two-pass structure it motivated is still correct for the reasons above.)
 - `download()` for these files has no resume support, unlike `corpus/opus.py`: at a few
   hundred MB each, restarting from zero on failure is cheap enough that a `.part` +
   `Range` dance isn't worth it here.
@@ -300,7 +305,12 @@ This is the core of the program's correctness. Any change to
    `INSERT OR IGNORE`: replaying a chunk duplicates nothing.
 5. **Deterministic queue order** (`ORDER BY rel_path`) in
    [search/planner.py](src/glyphwell/search/planner.py): a resume walks the same sequence
-   again, so `chunk_index` always designates the same chunk.
+   again, so `chunk_index` always designates the same chunk. `run_files.rel_path` is a
+   copy of the catalog database's `subtitle_files.rel_path`, taken once at enqueue time —
+   safe because it's immutable per `file_id` (a changed subtitle arrives under a new
+   `file_id` rather than mutating an existing row, see below and ADR-0015) — kept
+   specifically so this ordering never needs a join back to the catalog database (see
+   ADR-0018).
 6. **The manifest hash identifies the search.** Editing the YAML changes
    `runs.manifest_hash`: this creates a new run instead of mixing results produced by two
    different prompts. The YAML is archived in `runs.manifest_snapshot`.
@@ -315,27 +325,53 @@ which supersedes ADR-0006.
 ## 8. Data model
 
 SQLite, **without FTS5**: subtitle text is neither copied nor indexed in the database —
-only the catalog and progress state live there. Schema declared in
-[db/schema.sql](src/glyphwell/db/schema.sql), version tracked via `PRAGMA user_version`.
+only the catalog and progress state live there. **Two databases, not one** (ADR-0018):
+the immutable catalog and the mutable state of one search never share a file, so each has
+its own schema file and its own `PRAGMA user_version` history.
+
+**Catalog database** (`glyphwell.db` by default, `--catalog-database` /
+`GLYPHWELL_CATALOG_DATABASE`) — declared in
+[db/schema_catalog.sql](src/glyphwell/db/schema_catalog.sql):
 
 | Table | Role |
 |---|---|
 | `titles` | IMDb titles: type, title, year, episode-to-series link. |
 | `subtitle_files` | One archive member: member name, imdb_id, OPUS version. |
+| `corpus_downloads` | Traceability of OPUS downloads. |
+| `imports` | Traceability of IMDb dataset imports. |
+
+`titles.imdb_id`/`.parent_imdb_id` and `subtitle_files.imdb_id`/`.opensubtitles_file_id`
+are stored as `INTEGER` (`tt` stripped) for compactness — every other layer of the code
+still deals exclusively in the canonical `tt#######` string form; only
+`db/repositories.py`'s SQL boundary and `search/planner.py`'s query construction convert,
+via `corpus/layout.py`'s `imdb_id_to_int`/`imdb_id_from_int`.
+
+**Run database** (one per search, default `<data_dir>/<manifest filename stem>.db`,
+`--run-database` / `GLYPHWELL_RUN_DATABASE` on `search run`) — declared in
+[db/schema_run.sql](src/glyphwell/db/schema_run.sql):
+
+| Table | Role |
+|---|---|
 | `runs` | One search run: manifest, its hash, its snapshot, model, status. |
 | `run_files` | Work queue and per-file **resume point** (`last_sentence_id`). |
 | `results` | One model response per chunk, with its sentence range. |
-| `corpus_downloads` | Traceability of OPUS downloads. |
-| `imports` | Traceability of IMDb dataset imports. |
+
+`run_files.file_id`/`results.file_id` are **soft references** to the catalog database's
+`subtitle_files.file_id` — not FK-enforced, since SQLite cannot enforce a foreign key
+across two separate database files. `search resume`/`status`/`export` address a search by
+its run database's file path, never by `run_id`: the file, together with the
+`runs.manifest_snapshot` already written at launch, is the complete, durable handle.
 
 ## 9. Current scope
 
 The skeleton is in place, and **steps 1 through 3 are operational**: corpus acquisition,
 title resolution, and now full-corpus search via Ollama, including resume.
 
-**Operational**: packaging, configuration, logging, SQLite schema and migrations
-(`db init` produces a valid database), full CLI wiring, YAML manifest loading + validation
-+ hashing, sha256 computation, and `glyphwell corpus fetch` — resolution against
+**Operational**: packaging, configuration, logging, the two SQLite schemas and their
+independent migrations (`db init` produces a valid catalog database; a run database is
+created and upgraded by `search run` itself, no separate init step — ADR-0018), full CLI
+wiring, YAML manifest loading + validation + hashing, sha256 computation, and `glyphwell
+corpus fetch` — resolution against
 the OPUS index ([corpus/opus.py](src/glyphwell/corpus/opus.py)), resumable download,
 archive reading without extraction
 ([corpus/archive.py](src/glyphwell/corpus/archive.py)), traceability in `corpus_downloads`
@@ -365,12 +401,19 @@ archive reading without extraction
   [search/checkpoint.py](src/glyphwell/search/checkpoint.py), and
   [search/engine.py](src/glyphwell/search/engine.py) — cross-file concurrency
   (`Settings.concurrency`) with strictly sequential, checkpointed chunks within a file,
-  and clean SIGINT handling. `search/results.py`'s `validate_output` (schema + `match_when`
-  checking) is implemented; `export_run` and `summary` remain stubs (see below).
+  and clean SIGINT handling. Since ADR-0018, `SearchEngine` holds two connections
+  (`catalog_conn`, `run_conn`) instead of one; `planner.enqueue`/`iter_work` take both
+  (or `run_conn` alone for `iter_work`, since `run_files.rel_path` makes the join
+  unnecessary — see §7 item 5). `search/results.py`'s `validate_output` (schema +
+  `match_when` checking) is implemented; `export_run` and `summary` remain stubs (see
+  below).
 - `glyphwell search run <manifest.yaml>`, including `--dry-run`
   ([cli/search.py](src/glyphwell/cli/search.py)): renders one real, fully-substituted
   example prompt from the already-downloaded corpus (no `corpus index` required, no DB
-  writes, no Ollama call) so a manifest can be checked before a real run.
+  writes, no Ollama call) so a manifest can be checked before a real run. `search resume`
+  and `search status` are also operational, addressed by run-database file path rather
+  than `run_id` (ADR-0018); `search export` remains a stub pending
+  `search/results.py::export_run`.
 - The four previously-stubbed repositories in
   [db/repositories.py](src/glyphwell/db/repositories.py): `SubtitleFilesRepository`,
   `RunsRepository`, `RunFilesRepository`, `ResultsRepository` — plus two small additions
@@ -386,7 +429,7 @@ search feature above, since nothing else depends on them yet:
 | Module | To implement |
 |---|---|
 | [search/results.py](src/glyphwell/search/results.py) | `export_run`, `summary` |
-| [cli/search.py](src/glyphwell/cli/search.py) | `resume`, `status`, `export` commands |
+| [cli/search.py](src/glyphwell/cli/search.py) | `export` command (signature is settled — run-database file path, no `run_id` — but the body still delegates to the stub above) |
 
 Two decisions that shaped the search implementation, worth knowing before touching it
 again:

@@ -12,7 +12,6 @@ def _title(
     title_type: str | None = "movie",
     primary_title: str | None = "The Matrix",
     start_year: int | None = 1999,
-    is_adult: bool = False,
     parent_imdb_id: str | None = None,
     parent_title: str | None = None,
     season_number: int | None = None,
@@ -23,7 +22,6 @@ def _title(
         title_type=title_type,
         primary_title=primary_title,
         start_year=start_year,
-        is_adult=is_adult,
         parent_imdb_id=parent_imdb_id,
         parent_title=parent_title,
         season_number=season_number,
@@ -94,22 +92,20 @@ def _movie_row(
         original_title=primary_title,
         start_year=1999,
         end_year=None,
-        is_adult=False,
-        runtime_minutes=136,
         parent_imdb_id=parent_imdb_id,
         season_number=season_number,
         episode_number=episode_number,
     )
 
 
-def test_resolve_of_unknown_id_is_none(db: sqlite3.Connection) -> None:
-    assert SqliteTitleProvider(db).resolve("tt9999999") is None
+def test_resolve_of_unknown_id_is_none(catalog_db: sqlite3.Connection) -> None:
+    assert SqliteTitleProvider(catalog_db).resolve("tt9999999") is None
 
 
-def test_resolve_a_movie(db: sqlite3.Connection) -> None:
-    TitlesRepository(db).upsert_many([_movie_row()])
+def test_resolve_a_movie(catalog_db: sqlite3.Connection) -> None:
+    TitlesRepository(catalog_db).upsert_many([_movie_row()])
 
-    found = SqliteTitleProvider(db).resolve("tt0133093")
+    found = SqliteTitleProvider(catalog_db).resolve("tt0133093")
 
     assert found is not None
     assert found.primary_title == "The Matrix"
@@ -117,8 +113,8 @@ def test_resolve_a_movie(db: sqlite3.Connection) -> None:
     assert found.parent_title is None
 
 
-def test_resolve_an_episode_joins_the_parent_title(db: sqlite3.Connection) -> None:
-    repo = TitlesRepository(db)
+def test_resolve_an_episode_joins_the_parent_title(catalog_db: sqlite3.Connection) -> None:
+    repo = TitlesRepository(catalog_db)
     repo.upsert_many(
         [
             _movie_row(imdb_id="tt0041038", title_type="tvSeries", primary_title="The Series"),
@@ -133,7 +129,7 @@ def test_resolve_an_episode_joins_the_parent_title(db: sqlite3.Connection) -> No
         ]
     )
 
-    found = SqliteTitleProvider(db).resolve("tt0041039")
+    found = SqliteTitleProvider(catalog_db).resolve("tt0041039")
 
     assert found is not None
     assert found.is_episode
@@ -141,10 +137,10 @@ def test_resolve_an_episode_joins_the_parent_title(db: sqlite3.Connection) -> No
     assert found.display_name() == "The Series S01E09 — The Episode (1999)"
 
 
-def test_resolve_many_skips_unknown_ids(db: sqlite3.Connection) -> None:
-    TitlesRepository(db).upsert_many([_movie_row()])
+def test_resolve_many_skips_unknown_ids(catalog_db: sqlite3.Connection) -> None:
+    TitlesRepository(catalog_db).upsert_many([_movie_row()])
 
-    found = SqliteTitleProvider(db).resolve_many(["tt0133093", "tt9999999"])
+    found = SqliteTitleProvider(catalog_db).resolve_many(["tt0133093", "tt9999999"])
 
     assert set(found) == {"tt0133093"}
     assert found["tt0133093"].primary_title == "The Matrix"

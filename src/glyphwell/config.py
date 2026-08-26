@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["LogLevel", "Settings"]
+__all__ = ["LogLevel", "Settings", "resolve_run_database_path"]
 
 # Implicit alias, not `type LogLevel = ...` (PEP 695): Typer introspects the annotation at
 # runtime and can't unwrap a `TypeAliasType`, which would break the construction of the
@@ -36,9 +36,20 @@ class Settings(BaseSettings):
             "GB uncompressed."
         ),
     )
-    database: Path | None = Field(
+    catalog_database: Path | None = Field(
         default=None,
-        description="Path to the SQLite database. Defaults to <data_dir>/glyphwell.db.",
+        description=(
+            "Path to the catalog SQLite database (titles, subtitle_files, "
+            "corpus_downloads, imports). Defaults to <data_dir>/glyphwell.db."
+        ),
+    )
+    run_database: Path | None = Field(
+        default=None,
+        description=(
+            "Path to a search's run-state database (runs, run_files, results). Only "
+            "meaningful together with a manifest; see resolve_run_database_path(). "
+            "Defaults to <data_dir>/<manifest filename without .yaml>.db."
+        ),
     )
 
     ollama_host: str = Field(default="http://localhost:11434")
@@ -70,9 +81,13 @@ class Settings(BaseSettings):
     log_level: LogLevel = Field(default="INFO")
 
     @property
-    def database_path(self) -> Path:
-        """Effective path to the SQLite database."""
-        return self.database if self.database is not None else self.data_dir / "glyphwell.db"
+    def catalog_database_path(self) -> Path:
+        """Effective path to the catalog SQLite database."""
+        return (
+            self.catalog_database
+            if self.catalog_database is not None
+            else self.data_dir / "glyphwell.db"
+        )
 
     @property
     def corpus_dir(self) -> Path:
@@ -98,3 +113,13 @@ class Settings(BaseSettings):
         """Creates the working directories if they don't exist."""
         for directory in (self.data_dir, self.corpus_dir, self.downloads_dir, self.exports_dir):
             directory.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_run_database_path(settings: Settings, *, manifest_path: Path) -> Path:
+    """Effective path to a search's run database.
+
+    Defaults to ``<data_dir>/<manifest filename stem>.db`` — the manifest's own file
+    stem, not its declared `name`: two manifests may share a `name`, but never a
+    filename in the same directory, so the default can't collide by surprise.
+    """
+    return settings.run_database or settings.data_dir / f"{manifest_path.stem}.db"

@@ -24,7 +24,6 @@ class Title:
     title_type: str | None
     primary_title: str | None
     start_year: int | None
-    is_adult: bool
     parent_imdb_id: ImdbId | None = None
     parent_title: str | None = None
     season_number: int | None = None
@@ -108,7 +107,6 @@ def _to_title(row: TitleRow, parent: TitleRow | None) -> Title:
         title_type=row.title_type,
         primary_title=row.primary_title,
         start_year=row.start_year,
-        is_adult=row.is_adult,
         parent_imdb_id=row.parent_imdb_id,
         parent_title=parent.primary_title if parent is not None else None,
         season_number=row.season_number,

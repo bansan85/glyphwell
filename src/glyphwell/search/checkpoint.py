@@ -53,9 +53,11 @@ class Checkpoint:
         return self.last_sentence_index is not None
 
 
-def load_checkpoint(conn: sqlite3.Connection, *, run_id: int, file_id: int) -> Checkpoint | None:
+def load_checkpoint(
+    run_conn: sqlite3.Connection, *, run_id: int, file_id: int
+) -> Checkpoint | None:
     """Reads a file's cursor, or `None` if it is not in this search's queue."""
-    row = RunFilesRepository(conn).get(run_id, file_id)
+    row = RunFilesRepository(run_conn).get(run_id, file_id)
     if row is None:
         return None
     return Checkpoint(
@@ -99,7 +101,7 @@ def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -
 
 
 def commit_chunk(
-    conn: sqlite3.Connection,
+    run_conn: sqlite3.Connection,
     *,
     run_id: int,
     file_id: int,
@@ -140,18 +142,18 @@ def commit_chunk(
         latency_ms=latency_ms,
     )
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        inserted = ResultsRepository(conn).insert_ignore(row)
-        RunFilesRepository(conn).advance(
+        run_conn.execute("BEGIN IMMEDIATE")
+        inserted = ResultsRepository(run_conn).insert_ignore(row)
+        RunFilesRepository(run_conn).advance(
             run_id,
             file_id,
             last_sentence_index=chunk.last.index,
             last_sentence_id=chunk.last.id,
             chunks_done=chunk.index + 1,
         )
-        conn.execute("COMMIT")
+        run_conn.execute("COMMIT")
     except sqlite3.Error as exc:
-        conn.execute("ROLLBACK")
+        run_conn.execute("ROLLBACK")
         message = f"failed to commit chunk {chunk.index} of file {file_id} (run {run_id}): {exc}"
         raise DatabaseError(message) from exc
     return inserted

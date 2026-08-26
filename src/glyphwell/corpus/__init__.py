@@ -3,7 +3,14 @@
 from glyphwell.corpus.archive import ArchiveMember, ArchiveSummary, CorpusArchive
 from glyphwell.corpus.chunker import Chunk, chunk_count, iter_chunks
 from glyphwell.corpus.hashing import sha256_file, sha256_stream
-from glyphwell.corpus.layout import CorpusEntry, iter_corpus, normalize_imdb_id, parse_entry
+from glyphwell.corpus.layout import (
+    CorpusEntry,
+    imdb_id_from_int,
+    imdb_id_to_int,
+    iter_corpus,
+    normalize_imdb_id,
+    parse_entry,
+)
 from glyphwell.corpus.reader import Sentence, count_sentences, iter_sentences
 
 __all__ = [
@@ -15,6 +22,8 @@ __all__ = [
     "Sentence",
     "chunk_count",
     "count_sentences",
+    "imdb_id_from_int",
+    "imdb_id_to_int",
     "iter_chunks",
     "iter_corpus",
     "iter_sentences",

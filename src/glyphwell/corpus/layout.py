@@ -38,6 +38,8 @@ __all__ = [
     "IMDB_ID_WIDTH",
     "SUBTITLE_SUFFIXES",
     "CorpusEntry",
+    "imdb_id_from_int",
+    "imdb_id_to_int",
     "iter_corpus",
     "normalize_imdb_id",
     "parse_entry",
@@ -114,6 +116,28 @@ def normalize_imdb_id(raw: str) -> ImdbId:
         message = f"not a recognizable IMDb identifier: {raw!r}"
         raise CorpusLayoutError(message)
     return f"tt{digits.zfill(IMDB_ID_WIDTH)}"
+
+
+def imdb_id_to_int(imdb_id: ImdbId) -> int:
+    """Numeric part of an IMDb identifier, for compact database storage.
+
+    Accepts any form `normalize_imdb_id` accepts (bare, prefixed, the TV-episode
+    compound segment): the identifier is canonicalized first, so this never silently
+    stores the wrong id.
+
+    Raises:
+        CorpusLayoutError: not a recognizable IMDb identifier.
+    """
+    return int(normalize_imdb_id(imdb_id).removeprefix("tt"))
+
+
+def imdb_id_from_int(value: int) -> ImdbId:
+    """Canonical ``tt#######`` form of a numeric IMDb identifier.
+
+    Inverse of `imdb_id_to_int`: zero-pads to `IMDB_ID_WIDTH`, exactly like
+    `normalize_imdb_id`, and leaves an identifier already wider than that unpadded.
+    """
+    return f"tt{value:0{IMDB_ID_WIDTH}d}"
 
 
 def parse_entry(rel_path: Path) -> CorpusEntry:

@@ -36,7 +36,7 @@ from glyphwell.corpus.opus import (
     download_corpus,
     resolve_archive,
 )
-from glyphwell.db import connect, ensure_current
+from glyphwell.db import connect, ensure_catalog_current
 from glyphwell.db.repositories import (
     CorpusDownloadRow,
     CorpusDownloadsRepository,
@@ -239,8 +239,8 @@ def _upsert_pending(settings: Settings, record: OpusFileRecord) -> int:
     Deliberately written *before* the download: a missing database must fail the
     command right away, not after several tens of GB.
     """
-    with connect(settings.database_path) as conn:
-        ensure_current(conn)
+    with connect(settings.catalog_database_path) as conn:
+        ensure_catalog_current(conn)
         return CorpusDownloadsRepository(conn).upsert(
             CorpusDownloadRow(
                 opus_corpus=record.corpus,
@@ -264,7 +264,7 @@ def _mark(
     verified: bool = False,
 ) -> None:
     """Advances the traceability row."""
-    with connect(settings.database_path) as conn:
+    with connect(settings.catalog_database_path) as conn:
         CorpusDownloadsRepository(conn).mark(
             download_id,
             status,
@@ -290,8 +290,8 @@ def index(
     settings = get_context(ctx).settings
     target_language = language or settings.opus_language
 
-    with connect(settings.database_path) as conn:
-        ensure_current(conn)
+    with connect(settings.catalog_database_path) as conn:
+        ensure_catalog_current(conn)
         download = CorpusDownloadsRepository(conn).get(
             opus_corpus=settings.opus_corpus,
             opus_version=settings.opus_version,

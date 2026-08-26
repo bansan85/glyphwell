@@ -24,13 +24,32 @@ below sit under `Unreleased`.
 
 #### Database
 
-- SQLite schema in `src/glyphwell/db/schema.sql`, version 1, carried by
-  `PRAGMA user_version`. Deliberately no FTS5: subtitle text is neither copied nor indexed
+- Two independent SQLite databases, not one — the **catalog** database (immutable once
+  fetched: `titles`, `subtitle_files`, `corpus_downloads`, `imports`) and a **run**
+  database per search (`runs`, `run_files`, `results`), each with its own schema file
+  (`src/glyphwell/db/schema_catalog.sql`, `schema_run.sql`) and its own
+  `PRAGMA user_version` history (`CATALOG_SCHEMA_VERSION`, `RUN_SCHEMA_VERSION`, both `1`
+  — ADR-0018). Deliberately no FTS5: subtitle text is neither copied nor indexed
   (ADR-0002).
-- Tables: `titles`, `subtitle_files`, `runs`, `run_files`, `results`, `corpus_downloads`,
-  `imports`.
-- `glyphwell db init` creates a valid database; `db status` reports the schema version and
-  row counts; `db vacuum` compacts it.
+- `glyphwell db init` creates a valid catalog database; `db status` reports the schema
+  version and row counts; `db vacuum` compacts it. A run database has no separate init
+  step — `search run` creates and upgrades it (`initialize_run`, idempotent).
+- `run_files.file_id`/`results.file_id` are soft, unenforced references to the catalog
+  database's `subtitle_files.file_id` (SQLite cannot enforce a foreign key across two
+  database files); `run_files` carries its own copy of `subtitle_files.rel_path`, taken
+  once at enqueue time, so the deterministic work-queue order needs no cross-database join.
+- **Catalog storage-format cleanup, alongside the split.** `titles.imdb_id`/
+  `.parent_imdb_id` and `subtitle_files.imdb_id`/`.opensubtitles_file_id` are now stored
+  as `INTEGER` (`tt` stripped) rather than `TEXT`, converted at the `db/repositories.py`
+  boundary via new `corpus/layout.py::imdb_id_to_int`/`imdb_id_from_int`; every other
+  layer of the code still deals exclusively in the canonical `tt#######` string form.
+  `corpus_downloads.downloaded_at`/`.verified_at` and `imports.imported_at` are typed
+  `datetime.datetime | None` in their row dataclasses (parsed with
+  `datetime.fromisoformat`), instead of a plain `str` — `STRICT` tables reject a literal
+  `DATETIME` column type, so storage stays `TEXT`, only the Python-side representation
+  changes. `subtitle_files.discovered_at`/`.updated_at` and
+  `titles.is_adult`/`.runtime_minutes`/`.source`/`.imported_at` are dropped: none were
+  ever read back by any repository method, CLI command, or filter.
 
 #### Search manifests
 
@@ -89,11 +108,10 @@ below sit under `Unreleased`.
   a distinct operation from writing a title's base columns (ADR-0010).
 - **Two-pass import, not a single upsert (ADR-0010).** `import_basics` never knows an
   episode's parent/season/episode, and `import_episodes` never knows the rest of a
-  title's columns, including the non-nullable `is_adult`. `TitlesRepository.upsert_many`
-  (used only by `import_basics`) coalesces every nullable column so a re-import can't
-  blank out a link written by `import_episodes`; the reverse direction goes through
-  `set_episode_links_many` (a plain `UPDATE`, not an upsert), which never has to invent a
-  value for a column it doesn't have.
+  title's columns. `TitlesRepository.upsert_many` (used only by `import_basics`)
+  coalesces every nullable column so a re-import can't blank out a link written by
+  `import_episodes`; the reverse direction goes through `set_episode_links_many` (a plain
+  `UPDATE`, not an upsert), which never touches a column it doesn't have.
 - **Performance.** `import_basics`/`import_episodes` read the TSVs positionally
   (`csv.reader`, header resolved once) straight into `TitleRow`/`EpisodeLink`, instead of
   through `csv.DictReader` and a per-row `dict`. Measured on the real `title.basics.tsv`
@@ -157,7 +175,14 @@ below sit under `Unreleased`.
   (ADR-0012). A prefiltered-out chunk still gets a `commit_chunk` call (`matched=False,
   payload=None`) so `results` stays a gapless ledger of every `chunk_index` for a file.
   Clean SIGINT handling: the current chunk finishes and commits before the run is marked
-  `paused`.
+  `paused`. `SearchEngine` holds two connections (`catalog_conn`, `run_conn` — ADR-0018);
+  `planner.enqueue` takes both, `planner.iter_work` takes `run_conn` alone since
+  `run_files.rel_path` removes the need for a join back to the catalog.
+- `glyphwell search resume` and `glyphwell search status` are now operational, addressed
+  by the run database's file path rather than a numeric `run_id` — the file, together
+  with the manifest snapshot already archived in it, is the complete handle for a search
+  (ADR-0018). `RunsRepository.unfinished()` backs `resume`'s "the sole run left to
+  resume in this file" resolution.
 - `search run` now reports progress instead of going silent between the initial
   `database opened` line and the final summary table: run creation/resume and queue size
   at `INFO`, one line per file completed at `INFO`, and one line per chunk (submitted,
@@ -213,6 +238,23 @@ breaking changes for users. They do change names that were already committed.
   option forces the fingerprint when the transfer could not produce it for free.
 - `stubs/opustools/__init__.pyi` was rewritten against `opustools` 1.8.3 and reduced to the
   surface actually used: `OpusGet.url` and `OpusGet.make_file_name`.
+- **`--database` / `GLYPHWELL_DATABASE` is now `--catalog-database` /
+  `GLYPHWELL_CATALOG_DATABASE`** (`Settings.database`/`.database_path` renamed to
+  `.catalog_database`/`.catalog_database_path`), now that a second, `search`-scoped
+  `--run-database` / `GLYPHWELL_RUN_DATABASE` option exists and "the database" is
+  ambiguous between the two (ADR-0018).
+- **`search resume`/`status`/`export` take a run-database file path instead of a numeric
+  `run_id`.** `run_id` stays an internal SQL primary key but is no longer user-facing;
+  `search status` with no further argument now lists every run recorded in the given
+  file, not a global registry (there is none — ADR-0018).
+- **Manifest `select.imdb_ids` is now numeric.** `imdb_ids: ["tt0133093"]` becomes
+  `imdb_ids: [133093]` — the bare numeric part of the id, `tt` stripped, matching how
+  `subtitle_files.imdb_id`/`titles.imdb_id` are stored (see *Catalog storage-format
+  cleanup* above). `search/planner.py::_select_clauses` no longer converts at query time
+  (the manifest value already matches the column's storage type); `cli/search.py`'s
+  `--dry-run` preview path converts the other way (`imdb_id_to_int(entry.imdb_id)`) to
+  compare a corpus entry's canonical string id against the manifest's numeric filter.
+  `searches/example.yaml` updated to match.
 
 ### Removed
 
@@ -229,10 +271,15 @@ breaking changes for users. They do change names that were already committed.
   `opensubtitles_file_id` rather than mutating an existing one, so the checksum never
   caught anything real; nothing had wired `run_files.file_sha256` or called the other two
   repository methods in the first place. `corpus index` no longer reads any subtitle
-  content — pure central-directory cataloging. `db/schema.sql` drops both columns;
-  `db/migrations.py` version 3 does the same on an existing database. The archive-download
-  checksum (`corpus_downloads.sha256`, `corpus fetch --hash`) and the manifest hash
+  content — pure central-directory cataloging. The archive-download checksum
+  (`corpus_downloads.sha256`, `corpus fetch --hash`) and the manifest hash
   (`runs.manifest_hash`) are untouched — unrelated concepts.
+- **Four write-only catalog columns, never read back by any repository method, CLI
+  command, or filter (ADR-0018):** `subtitle_files.discovered_at`/`.updated_at`, and
+  `titles.is_adult`/`.runtime_minutes`/`.source`/`.imported_at`. `import_basics` stops
+  resolving `isAdult`/`runtimeMinutes` from `title.basics.tsv` accordingly; `TitleRow`,
+  `metadata.resolver.Title`, and `CorpusDownloadRow`/`ImportRow`'s timestamp fields
+  shrink/change type to match (see *Catalog storage-format cleanup* above).
 
 ### Fixed
 
@@ -294,19 +341,19 @@ are now implemented; see *Known limitations* for the handful that still raise
 |---|---|
 | `glyphwell` | `__version__` |
 | `glyphwell.types` | `ImdbId`, `JsonObject`, `JsonValue`, `LanguageCode`, `OpenSubtitlesFileId`, `OpusVersion`, `SentenceId`, `Sha256` |
-| `glyphwell.config` | `LogLevel`, `Settings` |
+| `glyphwell.config` | `LogLevel`, `Settings`, `resolve_run_database_path` |
 | `glyphwell.errors` | `GlyphwellError`, `ConfigurationError`, `CorpusError`, `CorpusLayoutError`, `CorpusReadError`, `DatabaseError`, `ManifestError`, `MetadataError`, `ModelOutputError`, `OllamaError`, `SchemaVersionError`, `SearchError` |
 | `glyphwell.console` | `console` |
 | `glyphwell.logging` | `get_logger`, `setup_logging` |
 | `glyphwell.cli` | `AppContext`, `app`, `get_context`, `main` |
-| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `chunk_count`, `count_sentences`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file`, `sha256_stream` |
+| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `chunk_count`, `count_sentences`, `imdb_id_from_int`, `imdb_id_to_int`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file`, `sha256_stream` |
 | `glyphwell.corpus.archive` | `ArchiveMember`, `ArchiveSummary`, `CorpusArchive` |
 | `glyphwell.corpus.opus` | `DEFAULT_CORPUS`, `DEFAULT_PREPROCESSING`, `DEFAULT_TIMEOUT`, `DEFAULT_VERSION`, `CorpusDownload`, `OpusFileRecord`, `Preprocessing`, `ProgressCallback`, `download_corpus`, `iter_available_versions`, `resolve_archive` |
-| `glyphwell.corpus.layout` | `IMDB_ID_WIDTH`, `SUBTITLE_SUFFIXES`, `CorpusEntry`, `iter_corpus`, `normalize_imdb_id`, `parse_entry` |
+| `glyphwell.corpus.layout` | `IMDB_ID_WIDTH`, `SUBTITLE_SUFFIXES`, `CorpusEntry`, `imdb_id_from_int`, `imdb_id_to_int`, `iter_corpus`, `normalize_imdb_id`, `parse_entry` |
 | `glyphwell.corpus.reader` | `Sentence`, `count_sentences`, `iter_sentences` |
 | `glyphwell.corpus.chunker` | `Chunk`, `chunk_count`, `iter_chunks` |
 | `glyphwell.corpus.hashing` | `DEFAULT_CHUNK_SIZE`, `sha256_file`, `sha256_stream` |
-| `glyphwell.db` | `SCHEMA_VERSION`, `connect`, `current_version`, `ensure_current`, `initialize`, `open_connection`, `schema_sql` |
+| `glyphwell.db` | `CATALOG_SCHEMA_VERSION`, `RUN_SCHEMA_VERSION`, `catalog_schema_sql`, `connect`, `current_version`, `ensure_catalog_current`, `ensure_run_current`, `initialize_catalog`, `initialize_run`, `open_connection`, `run_schema_sql` |
 | `glyphwell.db.repositories` | `CorpusDownloadRow`, `CorpusDownloadsRepository`, `DownloadStatus`, `EpisodeLink`, `FileStatus`, `ImportRow`, `ImportSource`, `ImportsRepository`, `RunStatus`, `ResultRow`, `ResultsRepository`, `RunFileRow`, `RunFilesRepository`, `RunRow`, `RunsRepository`, `SubtitleFileRow`, `SubtitleFilesRepository`, `TitleRow`, `TitlesRepository` |
 | `glyphwell.manifest` | `LoadedManifest`, `Prefilter`, `SearchManifest`, `load`, `manifest_hash` |
 | `glyphwell.manifest.model` | `ChunkConfig`, `OutputConfig`, `OutputFormat`, `PrefilterConfig`, `PrefilterMode`, `PromptConfig`, `SearchManifest`, `SelectConfig`, `YearRange` |
@@ -325,39 +372,59 @@ re-exported from the `glyphwell.search` package.
 `CorpusEntry.opus_file_id` is now `CorpusEntry.opensubtitles_file_id`, and `iter_corpus`
 takes an open `CorpusArchive` rather than a directory root.
 
+Field-shape changes within otherwise-stable names (ADR-0018): `TitleRow`/
+`metadata.resolver.Title` drop `is_adult`/`runtime_minutes`; `RunFileRow`/
+`PlannedFile` gain/lose `rel_path` (`PlannedFile` also drops `imdb_id`/`sentence_count` —
+unused by every caller, see ADR-0018); `RunFilesRepository.enqueue_many` takes
+`Sequence[tuple[int, str]]` instead of `Sequence[int]`; `CorpusDownloadRow.downloaded_at`/
+`.verified_at` and `ImportRow.imported_at` are `datetime.datetime | None` instead of
+`str | None`; `SelectConfig.imdb_ids` is `tuple[int, ...] | None` instead of
+`tuple[str, ...] | None` — see *Manifest `select.imdb_ids` is now numeric* below, this one
+is a user-facing manifest format change, not just an internal shape change.
+
 #### Command-line interface
 
 ```
-glyphwell [--version] [--data-dir] [--database] [--log-level]
+glyphwell [--version] [--data-dir] [--catalog-database] [--log-level]
 glyphwell db        init | status | vacuum
 glyphwell corpus    fetch [--language --version --corpus --dest --force --hash]
                     index [--language]
 glyphwell metadata  fetch-imdb [--force] | import-imdb [--source-dir]
-glyphwell search    run [--limit --concurrency --dry-run] | resume | status | export
+glyphwell search    run [--limit --concurrency --run-database --dry-run]
+                    resume RUN_DATABASE [--limit]
+                    status RUN_DATABASE
+                    export RUN_DATABASE [--format --dest --matched-only/--all]
 ```
 
 ### Known limitations
 
-- 5 call sites across 2 modules raise `NotImplementedError` (down from 6 across 3, itself
-  down from 56 across 13, itself down from 68 across 16 — `corpus refresh` is gone rather
-  than staying a stub, see ADR-0015). Signatures, dataclasses and protocols are complete
-  and typecheck under strict mypy, but the bodies are not written. Fully working at this
-  point: `db init`, `db status`, `db vacuum`, `corpus fetch`, `corpus index`,
-  `metadata fetch-imdb`, `metadata import-imdb`, `search run` (including `--dry-run`),
-  manifest loading/validation/hashing, sha256 computation, configuration and logging.
-- `search resume`/`status`/`export` still raise: everything downstream of a finished run
-  (`search/results.py`'s `export_run` and `summary`) remains out of scope. Every
-  repository in `db/repositories.py` is now implemented.
+- 3 call sites across 2 modules raise `NotImplementedError` (down from 5 across 2, itself
+  down from 6 across 3, itself down from 56 across 13, itself down from 68 across 16 —
+  `corpus refresh` is gone rather than staying a stub, see ADR-0015). Signatures,
+  dataclasses and protocols are complete and typecheck under strict mypy, but the bodies
+  are not written. Fully working at this point: `db init`, `db status`, `db vacuum`,
+  `corpus fetch`, `corpus index`, `metadata fetch-imdb`, `metadata import-imdb`,
+  `search run` (including `--dry-run`), `search resume`, `search status`, manifest
+  loading/validation/hashing, sha256 computation, configuration and logging.
+- `search export` still raises: `search/results.py`'s `export_run` and `summary` remain
+  out of scope. Every repository in `db/repositories.py` is now implemented.
+- **`opensubtitles_file_id`'s integer storage (ADR-0018) assumes no leading zero.**
+  Verified against the one sample fixture and `corpus/layout.py::parse_entry` (which
+  neither pads nor strips this segment), but not against the live 35 GB archive. If a
+  real `opensubtitles_file_id` ever starts with `0`, converting to `INTEGER` and back via
+  `str(int_value)` would silently drop it — worth a one-time check (`corpus index` output,
+  or a listing of the real archive) before relying on it for anything the leading zero
+  would matter to (e.g. reconstructing an opensubtitles.org URL).
 - **`SelectConfig.title_types`/`years` filtering is live without the index ADR-0011 said
   it would need.** `search/planner.py::_matching_query` now joins `subtitle_files` to
   `titles` and filters on `t.title_type`/`t.start_year` exactly as ADR-0011 anticipated,
-  but no migration adding a purpose-built index has landed with it —
-  `db/migrations.py` and `db/schema.sql` are unchanged by this commit. Whether this
-  matters depends on the query plan SQLite picks: driving off `subtitle_files` and
-  reaching `titles` by primary key needs no such index; driving off a
-  `title_type`/`start_year`-filtered scan of `titles` would. Measure with
-  `EXPLAIN QUERY PLAN` on a populated database before assuming either way, and add the
-  migration ADR-0011 already described if it turns out to matter.
+  but no migration adding a purpose-built index has landed with it — `db/migrations.py`
+  and `db/schema_catalog.sql` are unchanged by this commit. Whether this matters depends
+  on the query plan SQLite picks: driving off `subtitle_files` and reaching `titles` by
+  primary key needs no such index; driving off a `title_type`/`start_year`-filtered scan
+  of `titles` would. Measure with `EXPLAIN QUERY PLAN` on a populated database before
+  assuming either way, and add the migration ADR-0011 already described if it turns out
+  to matter.
 - **`Settings.concurrency` is bounded twice (ADR-0012).** Raising it past what the Ollama
   server can actually run in parallel — `OLLAMA_NUM_PARALLEL`, and the model's fit in
   available VRAM — buys nothing: a single, VRAM-constrained GPU serializes the underlying
@@ -388,14 +455,6 @@ glyphwell search    run [--limit --concurrency --dry-run] | resume | status | ex
   baseline — with the database on a mechanical HDD (measured before ADR-0011's index
   removal; removing them narrows this gap but does not close it, since disk commit
   latency is not an indexing cost). See `doc/metadata.md#performance`.
-- **Some schema changes still predate any version bump.** `SCHEMA_VERSION` is now `2`
-  (the index removal above is `db/migrations.py`'s first real migration), but two
-  earlier renames — `subtitle_files.opus_file_id` to `opensubtitles_file_id` and
-  `corpus_downloads.extracted_at` to `verified_at` — were made directly in `schema.sql`
-  while it was still "version 1" and have no corresponding migration. A database
-  created before those renames passes `ensure_current` and then fails at runtime on a
-  missing column. Delete `data/glyphwell.db` and run `glyphwell db init` again. Acceptable
-  only because `data/` is gitignored and fully reconstructible, and nothing is released.
 - `SubtitleFileRow.file_id` is typed `int`, so `SubtitleFilesRepository.upsert` cannot be
   handed a row that has not been inserted yet. `CorpusDownloadRow.download_id` is
   `int | None` and does not have the defect; the other row types were left as they were.
@@ -429,3 +488,5 @@ Architecture Decision Records live in [docs/adr/](docs/adr/):
 - ADR-0014 - one http client factory and a bounded TLS escape hatch
 - ADR-0015 — drop the per-file freshness checksum
 - ADR-0016 — keep only the episode id from the TV-episode compound segment
+- ADR-0017 — eagerly materialize the search work queue rather than stream it
+- ADR-0018 — split the catalog and per-search run databases

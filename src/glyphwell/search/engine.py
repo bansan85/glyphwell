@@ -108,9 +108,15 @@ class _Counters:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SearchEngine:
-    """Runs a search described by a manifest."""
+    """Runs a search described by a manifest.
 
-    conn: "sqlite3.Connection"
+    Two databases, two connections: `catalog_conn` (titles, subtitle_files,
+    corpus_downloads — immutable, shared across every search) and `run_conn` (runs,
+    run_files, results — mutable, one file per search). See ADR-0018.
+    """
+
+    catalog_conn: "sqlite3.Connection"
+    run_conn: "sqlite3.Connection"
     client: "LlmClient"
     settings: "Settings"
     _stop_event: threading.Event = field(
@@ -133,7 +139,7 @@ class SearchEngine:
         """
         _log.info("checking model %r is available", manifest.model)
         self.client.ensure_model(manifest.model)
-        runs = RunsRepository(self.conn)
+        runs = RunsRepository(self.run_conn)
         existing = runs.find_by_hash(manifest.hash)
         if existing and existing[0].status is not RunStatus.DONE:
             _log.info("manifest matches existing run %d, resuming it", existing[0].run_id)
@@ -158,12 +164,12 @@ class SearchEngine:
         Raises:
             SearchError: unknown or already finished search.
         """
-        row = _require_run(self.conn, run_id)
+        row = _require_run(self.run_conn, run_id)
         if row.status is RunStatus.DONE:
             message = f"search {run_id} is already finished"
             raise SearchError(message)
 
-        manifest = _manifest_from_run(self.conn, run_id)
+        manifest = _manifest_from_run(self.run_conn, run_id)
         _log.info("resuming run %d (%s)", run_id, manifest.name)
         self.client.ensure_model(manifest.model)
         return self._run(run_id, manifest, limit=limit, rebuild_queue=False)
@@ -175,22 +181,29 @@ class SearchEngine:
         without being emitted: negligible cost compared to a call to the model, and no
         dependency on a byte offset that the slightest content change would invalidate.
         """
-        _require_run(self.conn, run_id)
-        manifest = _manifest_from_run(self.conn, run_id)
+        _require_run(self.run_conn, run_id)
+        manifest = _manifest_from_run(self.run_conn, run_id)
         prefilter = Prefilter.compile(manifest.prefilter)
-        titles = SqliteTitleProvider(self.conn)
-        run_files = RunFilesRepository(self.conn)
+        titles = SqliteTitleProvider(self.catalog_conn)
+        run_files = RunFilesRepository(self.run_conn)
         counters = _Counters()
         archives: dict[tuple[str, str], CorpusArchive] = {}
 
         try:
             state = _open_file(
-                self.conn, archives, self.settings, run_id, file_id, manifest, titles
+                self.catalog_conn,
+                self.run_conn,
+                archives,
+                self.settings,
+                run_id,
+                file_id,
+                manifest,
+                titles,
             )
             if state is None:
                 return 0
             chunk = _next_evaluable_chunk(
-                self.conn,
+                self.run_conn,
                 run_id=run_id,
                 file_id=file_id,
                 model=manifest.model,
@@ -212,7 +225,7 @@ class SearchEngine:
                     )
                     return counters.chunks_done + counters.chunks_skipped
                 _commit_completion(
-                    self.conn,
+                    self.run_conn,
                     run_id=run_id,
                     file_id=file_id,
                     chunk=chunk,
@@ -221,7 +234,7 @@ class SearchEngine:
                     counters=counters,
                 )
                 chunk = _next_evaluable_chunk(
-                    self.conn,
+                    self.run_conn,
                     run_id=run_id,
                     file_id=file_id,
                     model=manifest.model,
@@ -259,13 +272,13 @@ class SearchEngine:
         on every resume would pay its full cost again for zero new rows. `start()` always
         passes true, since a freshly created run has no queue yet.
         """
-        runs = RunsRepository(self.conn)
+        runs = RunsRepository(self.run_conn)
         runs.set_status(run_id, RunStatus.RUNNING)
         if rebuild_queue:
             _log.info("building the work queue (select filters)")
-            planner.enqueue(self.conn, run_id=run_id, select=manifest.select)
+            planner.enqueue(self.catalog_conn, self.run_conn, run_id=run_id, select=manifest.select)
 
-        done, planned = planner.plan_size(self.conn, run_id)
+        done, planned = planner.plan_size(self.run_conn, run_id)
         if planned == 0:
             runs.set_status(run_id, RunStatus.FAILED)
             message = "no file in the corpus matches this manifest's select filters"
@@ -301,12 +314,12 @@ class SearchEngine:
         limit: int | None,
     ) -> SearchOutcome:
         """Processes every pending file, up to `Settings.concurrency` in flight at once."""
-        titles = SqliteTitleProvider(self.conn)
-        run_files = RunFilesRepository(self.conn)
+        titles = SqliteTitleProvider(self.catalog_conn)
+        run_files = RunFilesRepository(self.run_conn)
         archives: dict[tuple[str, str], CorpusArchive] = {}
         counters = _Counters()
         concurrency = max(1, self.settings.concurrency)
-        pending = planner.iter_work(self.conn, run_id=run_id, limit=limit)
+        pending = planner.iter_work(self.run_conn, run_id=run_id, limit=limit)
 
         try:
             with ThreadPoolExecutor(max_workers=concurrency) as executor:
@@ -317,7 +330,8 @@ class SearchEngine:
                         return False
                     for planned in pending:
                         state = _open_file(
-                            self.conn,
+                            self.catalog_conn,
+                            self.run_conn,
                             archives,
                             self.settings,
                             run_id,
@@ -328,7 +342,7 @@ class SearchEngine:
                         if state is None:
                             continue
                         chunk = _next_evaluable_chunk(
-                            self.conn,
+                            self.run_conn,
                             run_id=run_id,
                             file_id=planned.file_id,
                             model=manifest.model,
@@ -372,7 +386,7 @@ class SearchEngine:
                             continue
 
                         _commit_completion(
-                            self.conn,
+                            self.run_conn,
                             run_id=run_id,
                             file_id=file_id,
                             chunk=chunk,
@@ -386,7 +400,7 @@ class SearchEngine:
                             continue
 
                         next_chunk = _next_evaluable_chunk(
-                            self.conn,
+                            self.run_conn,
                             run_id=run_id,
                             file_id=file_id,
                             model=manifest.model,
@@ -421,18 +435,18 @@ class SearchEngine:
         )
 
 
-def _require_run(conn: "sqlite3.Connection", run_id: int) -> RunRow:
+def _require_run(run_conn: "sqlite3.Connection", run_id: int) -> RunRow:
     """Fetches a run's row, or raises `SearchError` if it doesn't exist."""
-    row = RunsRepository(conn).get(run_id)
+    row = RunsRepository(run_conn).get(run_id)
     if row is None:
         message = f"unknown search: {run_id}"
         raise SearchError(message)
     return row
 
 
-def _manifest_from_run(conn: "sqlite3.Connection", run_id: int) -> SearchManifest:
+def _manifest_from_run(run_conn: "sqlite3.Connection", run_id: int) -> SearchManifest:
     """Re-parses a run's manifest from its archived snapshot, never from disk."""
-    snapshot = RunsRepository(conn).get_manifest_snapshot(run_id)
+    snapshot = RunsRepository(run_conn).get_manifest_snapshot(run_id)
     if snapshot is None:
         message = f"unknown search: {run_id}"
         raise SearchError(message)
@@ -442,7 +456,7 @@ def _manifest_from_run(conn: "sqlite3.Connection", run_id: int) -> SearchManifes
 
 def _get_archive(
     archives: dict[tuple[str, str], CorpusArchive],
-    conn: "sqlite3.Connection",
+    catalog_conn: "sqlite3.Connection",
     settings: "Settings",
     opus_version: str,
     language: str,
@@ -456,7 +470,7 @@ def _get_archive(
     cached = archives.get(key)
     if cached is not None:
         return cached
-    download = CorpusDownloadsRepository(conn).get(
+    download = CorpusDownloadsRepository(catalog_conn).get(
         opus_corpus=settings.opus_corpus, opus_version=opus_version, language=language
     )
     if download is None or download.archive_path is None:
@@ -467,7 +481,8 @@ def _get_archive(
 
 
 def _open_file(
-    conn: "sqlite3.Connection",
+    catalog_conn: "sqlite3.Connection",
+    run_conn: "sqlite3.Connection",
     archives: dict[tuple[str, str], CorpusArchive],
     settings: "Settings",
     run_id: int,
@@ -481,12 +496,14 @@ def _open_file(
     the catalog, no downloaded archive for its `(opus_version, language)`, or an unreadable
     member — each of these is a per-file problem, not a reason to abort the whole search.
     """
-    file_row = SubtitleFilesRepository(conn).get(file_id)
+    file_row = SubtitleFilesRepository(catalog_conn).get(file_id)
     if file_row is None:
         _log.warning("file %d vanished from the catalog, skipping", file_id)
         return None
 
-    archive = _get_archive(archives, conn, settings, file_row.opus_version, file_row.language)
+    archive = _get_archive(
+        archives, catalog_conn, settings, file_row.opus_version, file_row.language
+    )
     if archive is None:
         _log.warning(
             "no downloaded archive for %s/%s: skipping file %d",
@@ -496,7 +513,7 @@ def _open_file(
         )
         return None
 
-    checkpoint = load_checkpoint(conn, run_id=run_id, file_id=file_id)
+    checkpoint = load_checkpoint(run_conn, run_id=run_id, file_id=file_id)
     start_index, start_chunk_index = resume_position(
         checkpoint, size=manifest.chunk.size, overlap=manifest.chunk.overlap
     )
@@ -504,7 +521,7 @@ def _open_file(
     try:
         stream = archive.open_member(file_row.rel_path)
     except CorpusError as exc:
-        RunFilesRepository(conn).mark_error(run_id, file_id, str(exc))
+        RunFilesRepository(run_conn).mark_error(run_id, file_id, str(exc))
         _log.warning("could not open %s: %s", file_row.rel_path, exc)
         return None
 
@@ -534,7 +551,7 @@ def _open_file(
 
 
 def _next_evaluable_chunk(
-    conn: "sqlite3.Connection",
+    run_conn: "sqlite3.Connection",
     *,
     run_id: int,
     file_id: int,
@@ -552,7 +569,7 @@ def _next_evaluable_chunk(
     for chunk in state.chunks:
         if prefilter.enabled and not prefilter.keeps(chunk.render(with_ids=False)):
             commit_chunk(
-                conn,
+                run_conn,
                 run_id=run_id,
                 file_id=file_id,
                 chunk=chunk,
@@ -603,7 +620,7 @@ def _complete_chunk(
 
 
 def _commit_completion(
-    conn: "sqlite3.Connection",
+    run_conn: "sqlite3.Connection",
     *,
     run_id: int,
     file_id: int,
@@ -617,7 +634,7 @@ def _commit_completion(
         completion.text, output=manifest.output, match_when=manifest.match_when
     )
     commit_chunk(
-        conn,
+        run_conn,
         run_id=run_id,
         file_id=file_id,
         chunk=chunk,

@@ -9,7 +9,7 @@ from typing import override
 import pytest
 
 from glyphwell.config import Settings
-from glyphwell.db import connect, initialize
+from glyphwell.db import connect, initialize_catalog, initialize_run
 from glyphwell.db.repositories import (
     CorpusDownloadRow,
     CorpusDownloadsRepository,
@@ -123,8 +123,8 @@ def _build_archive(tmp_path: Path) -> Path:
     return path
 
 
-def _seed(settings: Settings, conn: sqlite3.Connection, archive_path: Path) -> None:
-    CorpusDownloadsRepository(conn).upsert(
+def _seed(settings: Settings, catalog_conn: sqlite3.Connection, archive_path: Path) -> None:
+    CorpusDownloadsRepository(catalog_conn).upsert(
         CorpusDownloadRow(
             opus_corpus=settings.opus_corpus,
             opus_version=settings.opus_version,
@@ -135,7 +135,7 @@ def _seed(settings: Settings, conn: sqlite3.Connection, archive_path: Path) -> N
             status=DownloadStatus.DOWNLOADED,
         )
     )
-    TitlesRepository(conn).upsert_many(
+    TitlesRepository(catalog_conn).upsert_many(
         [
             TitleRow(
                 imdb_id="tt0133093",
@@ -144,15 +144,13 @@ def _seed(settings: Settings, conn: sqlite3.Connection, archive_path: Path) -> N
                 original_title=None,
                 start_year=1999,
                 end_year=None,
-                is_adult=False,
-                runtime_minutes=None,
                 parent_imdb_id=None,
                 season_number=None,
                 episode_number=None,
             )
         ]
     )
-    SubtitleFilesRepository(conn).upsert(
+    SubtitleFilesRepository(catalog_conn).upsert(
         SubtitleFileRow(
             file_id=0,
             opus_version=settings.opus_version,
@@ -172,11 +170,17 @@ def test_start_processes_every_chunk_of_every_file(tmp_path: Path) -> None:
     settings.ensure_directories()
     archive_path = _build_archive(tmp_path)
 
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
-        _seed(settings, conn, archive_path)
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
         client = _FakeLlmClient()
-        engine = SearchEngine(conn=conn, client=client, settings=settings)
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
         outcome = engine.start(load(_write_manifest(tmp_path)))
 
     assert outcome.files_done == 1
@@ -193,11 +197,17 @@ def test_start_creates_a_new_run_when_the_previous_one_is_done(tmp_path: Path) -
     archive_path = _build_archive(tmp_path)
     manifest_path = _write_manifest(tmp_path)
 
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
-        _seed(settings, conn, archive_path)
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
         client = _FakeLlmClient()
-        engine = SearchEngine(conn=conn, client=client, settings=settings)
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
         loaded = load(manifest_path)
 
         first = engine.start(loaded)
@@ -213,11 +223,17 @@ def test_request_stop_pauses_then_resume_finishes_the_file(tmp_path: Path) -> No
     archive_path = _build_archive(tmp_path)
     manifest_path = _write_manifest(tmp_path)
 
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
-        _seed(settings, conn, archive_path)
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
         stopping_client = _StoppingLlmClient()
-        engine = SearchEngine(conn=conn, client=stopping_client, settings=settings)
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=stopping_client, settings=settings
+        )
         stopping_client.engine = engine
 
         paused = engine.start(load(manifest_path))
@@ -225,18 +241,20 @@ def test_request_stop_pauses_then_resume_finishes_the_file(tmp_path: Path) -> No
         assert paused.interrupted is True
         assert paused.chunks_done == 1
         assert stopping_client.calls == 1
-        run = RunsRepository(conn).get(paused.run_id)
+        run = RunsRepository(run_conn).get(paused.run_id)
         assert run is not None
         assert run.status is RunStatus.PAUSED
 
         resuming_client = _FakeLlmClient()
-        resuming_engine = SearchEngine(conn=conn, client=resuming_client, settings=settings)
+        resuming_engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=resuming_client, settings=settings
+        )
         resumed = resuming_engine.resume(paused.run_id)
 
         assert resumed.interrupted is False
         assert resumed.chunks_done == 1
         assert resuming_client.calls == 1
-        run = RunsRepository(conn).get(paused.run_id)
+        run = RunsRepository(run_conn).get(paused.run_id)
         assert run is not None
         assert run.status is RunStatus.DONE
 
@@ -252,11 +270,17 @@ def test_resume_does_not_rebuild_the_queue(tmp_path: Path, monkeypatch: pytest.M
     archive_path = _build_archive(tmp_path)
     manifest_path = _write_manifest(tmp_path)
 
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
-        _seed(settings, conn, archive_path)
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
         stopping_client = _StoppingLlmClient()
-        engine = SearchEngine(conn=conn, client=stopping_client, settings=settings)
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=stopping_client, settings=settings
+        )
         stopping_client.engine = engine
         paused = engine.start(load(manifest_path))
         assert paused.interrupted is True
@@ -266,7 +290,9 @@ def test_resume_does_not_rebuild_the_queue(tmp_path: Path, monkeypatch: pytest.M
             raise AssertionError(message)
 
         monkeypatch.setattr(planner, "enqueue", _fail)
-        resuming_engine = SearchEngine(conn=conn, client=_FakeLlmClient(), settings=settings)
+        resuming_engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=_FakeLlmClient(), settings=settings
+        )
         resumed = resuming_engine.resume(paused.run_id)
 
         assert resumed.interrupted is False
@@ -279,11 +305,17 @@ def test_a_failing_file_is_marked_as_error_without_aborting_the_run(tmp_path: Pa
     archive_path = _build_archive(tmp_path)
     manifest_path = _write_manifest(tmp_path)
 
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
-        _seed(settings, conn, archive_path)
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
         client = _FailingLlmClient()
-        engine = SearchEngine(conn=conn, client=client, settings=settings)
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
 
         outcome = engine.start(load(manifest_path))
 

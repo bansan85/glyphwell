@@ -25,7 +25,6 @@ def test_render_context_uses_the_resolved_title() -> None:
         title_type="movie",
         primary_title="The Matrix",
         start_year=1999,
-        is_adult=False,
     )
     context = render_context(chunk=_chunk(), title=title, imdb_id="tt0133093")
     assert context.title == "The Matrix (1999)"

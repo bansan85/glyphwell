@@ -6,13 +6,7 @@ import pytest
 
 from glyphwell.corpus.chunker import Chunk, iter_chunks
 from glyphwell.corpus.reader import Sentence
-from glyphwell.db.repositories import (
-    ResultsRepository,
-    RunFilesRepository,
-    RunsRepository,
-    SubtitleFileRow,
-    SubtitleFilesRepository,
-)
+from glyphwell.db.repositories import ResultsRepository, RunFilesRepository, RunsRepository
 from glyphwell.search.checkpoint import Checkpoint, commit_chunk, load_checkpoint, resume_position
 
 
@@ -66,36 +60,25 @@ def test_resume_position_reproduces_the_next_chunk_of_a_fresh_pass(
         assert [s.index for s in resumed.sentences] == [s.index for s in expected.sentences]
 
 
-def _file_row() -> SubtitleFileRow:
-    return SubtitleFileRow(
-        file_id=0,
-        opus_version="v2024",
-        language="en",
-        imdb_id="tt0133093",
-        opensubtitles_file_id="3660124",
-        rel_path="OpenSubtitles/raw/en/1999/0133093/3660124.xml",
-        year=1999,
-        size_bytes=None,
-        sentence_count=None,
-    )
+_REL_PATH = "OpenSubtitles/raw/en/1999/0133093/3660124.xml"
 
 
 def _seed(conn: sqlite3.Connection) -> tuple[int, int]:
     run_id = RunsRepository(conn).create(
         manifest_path="m.yaml", manifest_hash="h", manifest_snapshot="name: a\n", model="m"
     )
-    file_id = SubtitleFilesRepository(conn).upsert(_file_row())
-    RunFilesRepository(conn).enqueue_many(run_id, [file_id])
+    file_id = 1
+    RunFilesRepository(conn).enqueue_many(run_id, [(file_id, _REL_PATH)])
     return run_id, file_id
 
 
-def test_load_checkpoint_returns_none_when_file_not_in_queue(db: sqlite3.Connection) -> None:
-    assert load_checkpoint(db, run_id=1, file_id=1) is None
+def test_load_checkpoint_returns_none_when_file_not_in_queue(run_db: sqlite3.Connection) -> None:
+    assert load_checkpoint(run_db, run_id=1, file_id=1) is None
 
 
-def test_load_checkpoint_reflects_a_fresh_queue_entry(db: sqlite3.Connection) -> None:
-    run_id, file_id = _seed(db)
-    checkpoint = load_checkpoint(db, run_id=run_id, file_id=file_id)
+def test_load_checkpoint_reflects_a_fresh_queue_entry(run_db: sqlite3.Connection) -> None:
+    run_id, file_id = _seed(run_db)
+    checkpoint = load_checkpoint(run_db, run_id=run_id, file_id=file_id)
     assert checkpoint is not None
     assert checkpoint.started is False
 
@@ -107,12 +90,12 @@ def _chunk(index: int, first: int, last: int) -> Chunk:
     )
 
 
-def test_commit_chunk_writes_result_and_advances_cursor(db: sqlite3.Connection) -> None:
-    run_id, file_id = _seed(db)
+def test_commit_chunk_writes_result_and_advances_cursor(run_db: sqlite3.Connection) -> None:
+    run_id, file_id = _seed(run_db)
     chunk = _chunk(0, 0, 1)
 
     inserted = commit_chunk(
-        db,
+        run_db,
         run_id=run_id,
         file_id=file_id,
         chunk=chunk,
@@ -123,20 +106,20 @@ def test_commit_chunk_writes_result_and_advances_cursor(db: sqlite3.Connection) 
     )
 
     assert inserted is True
-    row = RunFilesRepository(db).get(run_id, file_id)
+    row = RunFilesRepository(run_db).get(run_id, file_id)
     assert row is not None
     assert row.last_sentence_index == 1
     assert row.last_sentence_id == "1"
     assert row.chunks_done == 1
-    assert ResultsRepository(db).count(run_id) == 1
+    assert ResultsRepository(run_db).count(run_id) == 1
 
 
-def test_commit_chunk_replay_is_idempotent(db: sqlite3.Connection) -> None:
-    run_id, file_id = _seed(db)
+def test_commit_chunk_replay_is_idempotent(run_db: sqlite3.Connection) -> None:
+    run_id, file_id = _seed(run_db)
     chunk = _chunk(0, 0, 1)
 
     first = commit_chunk(
-        db,
+        run_db,
         run_id=run_id,
         file_id=file_id,
         chunk=chunk,
@@ -146,7 +129,7 @@ def test_commit_chunk_replay_is_idempotent(db: sqlite3.Connection) -> None:
         latency_ms=1,
     )
     second = commit_chunk(
-        db,
+        run_db,
         run_id=run_id,
         file_id=file_id,
         chunk=chunk,
@@ -158,7 +141,7 @@ def test_commit_chunk_replay_is_idempotent(db: sqlite3.Connection) -> None:
 
     assert first is True
     assert second is False
-    assert ResultsRepository(db).count(run_id) == 1
-    row = RunFilesRepository(db).get(run_id, file_id)
+    assert ResultsRepository(run_db).count(run_id) == 1
+    row = RunFilesRepository(run_db).get(run_id, file_id)
     assert row is not None
     assert row.chunks_done == 1

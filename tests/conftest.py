@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from glyphwell.config import Settings
-from glyphwell.db import connect, initialize
+from glyphwell.db import connect, initialize_catalog, initialize_run
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -68,8 +68,16 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def db(settings: Settings) -> Iterator[sqlite3.Connection]:
-    """Temporary database, schema already applied."""
-    with connect(settings.database_path, create=True) as conn:
-        initialize(conn)
+def catalog_db(settings: Settings) -> Iterator[sqlite3.Connection]:
+    """Temporary catalog database (titles, subtitle_files, corpus_downloads, imports)."""
+    with connect(settings.catalog_database_path, create=True) as conn:
+        initialize_catalog(conn)
+        yield conn
+
+
+@pytest.fixture
+def run_db(settings: Settings) -> Iterator[sqlite3.Connection]:
+    """Temporary run database (runs, run_files, results)."""
+    with connect(settings.data_dir / "run.db", create=True) as conn:
+        initialize_run(conn)
         yield conn

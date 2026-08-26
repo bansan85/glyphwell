@@ -29,7 +29,7 @@ def _build_archive(path: Path) -> None:
 
 
 def _seed_download(settings: Settings, archive_path: Path) -> None:
-    with connect(settings.database_path) as conn:
+    with connect(settings.catalog_database_path) as conn:
         CorpusDownloadsRepository(conn).upsert(
             CorpusDownloadRow(
                 opus_corpus=settings.opus_corpus,
@@ -70,7 +70,7 @@ def test_index_catalogs_every_subtitle(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
     assert result.exit_code == 0, result.output
 
-    with connect(settings.database_path) as conn:
+    with connect(settings.catalog_database_path) as conn:
         repo = SubtitleFilesRepository(conn)
         assert repo.count() == 2
         row = repo.get_by_path(
@@ -108,7 +108,7 @@ def test_index_catalogs_archive_with_skipped_members(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
     assert result.exit_code == 0, result.output
 
-    with connect(settings.database_path) as conn:
+    with connect(settings.catalog_database_path) as conn:
         assert SubtitleFilesRepository(conn).count() == 1
 
 
@@ -124,5 +124,5 @@ def test_index_is_idempotent(tmp_path: Path) -> None:
     second = runner.invoke(app, ["--data-dir", str(data_dir), "corpus", "index"])
     assert second.exit_code == 0, second.output
 
-    with connect(settings.database_path) as conn:
+    with connect(settings.catalog_database_path) as conn:
         assert SubtitleFilesRepository(conn).count() == 2

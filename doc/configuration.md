@@ -15,7 +15,8 @@ cp .env.example .env
 | Variable | Default | Role |
 |---|---|---|
 | `GLYPHWELL_DATA_DIR` | `./data` | Root of all produced data. |
-| `GLYPHWELL_DATABASE` | `<data_dir>/glyphwell.db` | Path to the SQLite database. |
+| `GLYPHWELL_CATALOG_DATABASE` | `<data_dir>/glyphwell.db` | Path to the catalog database (corpus + IMDb data). |
+| `GLYPHWELL_RUN_DATABASE` | `<data_dir>/<manifest filename>.db` | Path to a search's run database. Only meaningful for `search run` — see [search.md](search.md#catalog-vs-run-database). |
 | `GLYPHWELL_OPUS_CORPUS` | `OpenSubtitles` | Targeted OPUS corpus. |
 | `GLYPHWELL_OPUS_VERSION` | `v2024` | OPUS release — the most recent. |
 | `GLYPHWELL_OPUS_LANGUAGE` | `en` | Corpus language. |
@@ -25,16 +26,23 @@ cp .env.example .env
 | `GLYPHWELL_VERIFY_TLS` | `true` | Verify the TLS certificate of the download servers. |
 | `GLYPHWELL_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR`. |
 
-Four of them have a command-line equivalent, which takes precedence over the
-environment:
+Most of them have a command-line equivalent, which takes precedence over the environment.
+`--data-dir`, `--catalog-database`, `--log-level`, and `--no-check-certificate` are global
+options, valid before any subcommand:
 
 ```bash
 uv run glyphwell --data-dir /mnt/gros-disque/glyphwell --log-level DEBUG corpus fetch
 ```
 
-`--database` and `--no-check-certificate` are the two others. The last one only ever
-*loosens* the policy: with `GLYPHWELL_VERIFY_TLS=false` in the environment, omitting the
-flag does not restore verification.
+`--run-database` is scoped to `search run` instead (a run database only makes sense
+together with a manifest — see [search.md](search.md#catalog-vs-run-database)):
+
+```bash
+uv run glyphwell search run searches/example.yaml --run-database /mnt/gros-disque/example.db
+```
+
+`--no-check-certificate` only ever *loosens* the policy: with `GLYPHWELL_VERIFY_TLS=false`
+in the environment, omitting the flag does not restore verification.
 
 ## TLS certificates behind a proxy
 
@@ -84,7 +92,8 @@ data/
 │   └── OpenSubtitles_v2024_raw_en.zip
 ├── downloads/                          IMDb dataset TSVs
 ├── exports/                            results of `search export`
-└── glyphwell.db                        search catalog and progress
+├── glyphwell.db                        catalog database: corpus + IMDb data
+└── example.db                          run database for searches/example.yaml
 ```
 
 `data/corpus/` contains an **archive**, not a directory tree of subtitles: it is never
@@ -92,23 +101,34 @@ extracted (see [corpus.md](corpus.md)). During a download, a `*.zip.part` file i
 temporarily added there; it holds what has already been received and enables resumption.
 
 All of `data/` is ignored by git and fully reconstructible: deleting it only costs the
-time to re-download.
+time to re-download and re-search.
 
-## What the database contains
+## What the databases contain
 
-SQLite, **deliberately without FTS5**: subtitle text is neither copied nor indexed in the
-database. The archive remains the sole source of the text; the database carries only the
-catalog and progress state.
+SQLite, **deliberately without FTS5**: subtitle text is neither copied nor indexed in
+either database. The archive remains the sole source of the text. Two independent
+databases, not one — see [ADR-0018](../docs/adr/0018-split-catalog-and-run-databases.md)
+for why, and [search.md](search.md#catalog-vs-run-database) for the CLI side of it.
+
+**Catalog database** (`glyphwell.db` by default) — immutable once fetched, shared across
+every search:
 
 | Table | Role |
 |---|---|
 | `titles` | IMDb titles: type, title, year, episode → series relationship. |
-| `subtitle_files` | An archive member: name, imdb_id, checksum, OPUS release. |
-| `runs` | A search: manifest, its hash, its snapshot, model, status. |
-| `run_files` | Work queue and **resume point** per file. |
-| `results` | One model response per chunk, with its sentence range. |
+| `subtitle_files` | An archive member: name, imdb_id, OPUS release. |
 | `corpus_downloads` | Traceability of OPUS downloads. |
 | `imports` | Traceability of IMDb dataset imports. |
 
-The schema carries its version in `PRAGMA user_version`. `glyphwell db init` is
-idempotent and can be rerun safely.
+**Run database** (one per search, `<manifest filename>.db` by default) — mutable
+progress and results, created by `search run` itself:
+
+| Table | Role |
+|---|---|
+| `runs` | A search: manifest, its hash, its snapshot, model, status. |
+| `run_files` | Work queue and **resume point** per file. |
+| `results` | One model response per chunk, with its sentence range. |
+
+Each schema carries its own version in `PRAGMA user_version`. `glyphwell db init`
+(catalog only) is idempotent and can be rerun safely; a run database is created and
+upgraded automatically by `search run`, with no separate init step.

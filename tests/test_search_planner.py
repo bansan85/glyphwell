@@ -37,8 +37,6 @@ def _seed_files(
                     original_title=None,
                     start_year=2000,
                     end_year=None,
-                    is_adult=False,
-                    runtime_minutes=None,
                     parent_imdb_id=None,
                     season_number=None,
                     episode_number=None,
@@ -70,43 +68,61 @@ def _create_run(conn: sqlite3.Connection) -> int:
 
 
 def test_enqueue_paginates_across_batch_boundaries(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A queue spanning several pages must be enqueued in full, not just the first page."""
     monkeypatch.setattr(planner, "_ENQUEUE_BATCH_SIZE", 3)
-    _seed_files(db, 7)
-    run_id = _create_run(db)
+    _seed_files(catalog_db, 7)
+    run_id = _create_run(run_db)
 
-    added = planner.enqueue(db, run_id=run_id, select=SelectConfig())
+    added = planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
 
     assert added == 7
-    _done, planned = planner.plan_size(db, run_id)
+    _done, planned = planner.plan_size(run_db, run_id)
     assert planned == 7
 
 
-def test_enqueue_is_idempotent(db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_enqueue_is_idempotent(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Re-running enqueue (to catch up new corpus files) must not duplicate existing rows."""
     monkeypatch.setattr(planner, "_ENQUEUE_BATCH_SIZE", 3)
-    _seed_files(db, 7)
-    run_id = _create_run(db)
-    planner.enqueue(db, run_id=run_id, select=SelectConfig())
+    _seed_files(catalog_db, 7)
+    run_id = _create_run(run_db)
+    planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
 
-    added_again = planner.enqueue(db, run_id=run_id, select=SelectConfig())
+    added_again = planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
 
     assert added_again == 0
-    _done, planned = planner.plan_size(db, run_id)
+    _done, planned = planner.plan_size(run_db, run_id)
     assert planned == 7
 
 
 def test_enqueue_respects_title_type_filter_across_pages(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The select filter must still apply correctly once the query is paginated."""
     monkeypatch.setattr(planner, "_ENQUEUE_BATCH_SIZE", 2)
-    _seed_files(db, 3, start=0, title_type="movie")
-    _seed_files(db, 3, start=3, title_type="tvSeries")
-    run_id = _create_run(db)
+    _seed_files(catalog_db, 3, start=0, title_type="movie")
+    _seed_files(catalog_db, 3, start=3, title_type="tvSeries")
+    run_id = _create_run(run_db)
 
-    added = planner.enqueue(db, run_id=run_id, select=SelectConfig(title_types=("movie",)))
+    added = planner.enqueue(
+        catalog_db, run_db, run_id=run_id, select=SelectConfig(title_types=("movie",))
+    )
 
     assert added == 3
+
+
+def test_iter_work_reflects_enqueued_rel_path_order(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
+) -> None:
+    """`iter_work` reads `run_files` alone — no join back to the catalog database."""
+    _seed_files(catalog_db, 3)
+    run_id = _create_run(run_db)
+    planner.enqueue(catalog_db, run_db, run_id=run_id, select=SelectConfig())
+
+    planned = list(planner.iter_work(run_db, run_id=run_id))
+
+    assert [file.rel_path for file in planned] == sorted(file.rel_path for file in planned)
+    assert len(planned) == 3

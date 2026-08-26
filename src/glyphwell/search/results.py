@@ -98,7 +98,7 @@ def validate_output(raw: str, *, output: "OutputConfig", match_when: str | None)
 
 
 def export_run(
-    conn: "sqlite3.Connection",
+    run_conn: "sqlite3.Connection",
     *,
     run_id: int,
     dest: "Path",
@@ -112,7 +112,9 @@ def export_run(
     datasets thus improves subsequent exports without touching the results.
 
     Args:
-        conn: database connection.
+        run_conn: run database connection. `titles`, if given, wraps a *catalog* database
+            connection (`glyphwell.metadata.resolver.SqliteTitleProvider`) — the two are
+            deliberately separate parameters, never a single mixed connection.
         run_id: search to export.
         dest: output file.
         export_format: write format.
@@ -126,6 +128,6 @@ def export_run(
     raise NotImplementedError
 
 
-def summary(conn: "sqlite3.Connection", run_id: int) -> "Mapping[str, int]":
+def summary(run_conn: "sqlite3.Connection", run_id: int) -> "Mapping[str, int]":
     """Counters for a search, for ``search status``."""
     raise NotImplementedError

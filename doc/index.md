@@ -30,21 +30,23 @@ locally by Ollama.
 
 ## Progress status
 
-Steps 1 through 3 are operational; step 4 (resuming a run) is implemented for the
-resume-inside-a-file case, but `search resume`, `search status`, and `search export`
-themselves are not yet wired up.
+Steps 1 through 3 are operational, and so is most of step 4: `search resume` and
+`search status` both work end to end; only `search export` remains to be implemented.
 
 | Capability | Status |
 |---|---|
-| `glyphwell db init` / `status` / `vacuum` | operational |
+| `glyphwell db init` / `status` / `vacuum` | operational (catalog database) |
 | `glyphwell corpus fetch` | **operational** |
 | `glyphwell corpus index` | **operational** |
 | `glyphwell metadata fetch-imdb` / `import-imdb` | **operational** |
 | `glyphwell search run` (including `--dry-run`) | **operational** |
-| `glyphwell search resume` / `status` / `export` | to implement |
+| `glyphwell search resume` / `status` | **operational** |
+| `glyphwell search export` | to implement |
 
-Commands not yet implemented are wired into the CLI and already expose their help: their
-signature is settled, only the processing is missing.
+`search export` is wired into the CLI and already exposes its help: its signature is
+settled (see [ADR-0018](../docs/adr/0018-split-catalog-and-run-databases.md) for why it
+takes a run-database file path rather than a numeric id), only the processing is
+missing.
 
 ## Two principles that run through the project
 
