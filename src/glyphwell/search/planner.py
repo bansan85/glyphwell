@@ -24,7 +24,7 @@ from glyphwell.logging import get_logger
 from glyphwell.search.dedup import Candidate, select_representative
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from glyphwell.manifest.model import SelectConfig
 
@@ -63,6 +63,7 @@ def enqueue(
     *,
     run_id: int,
     select: "SelectConfig",
+    on_progress: "Callable[[], None] | None" = None,
 ) -> int:
     """Fills `run_files` for a search and returns the number of files added.
 
@@ -85,11 +86,18 @@ def enqueue(
     checkpointed. Each page is fully drained, then written (against `run_conn`) in its
     own explicit transaction — never one implicit transaction per row.
 
+    `on_progress`, if given, fires once per row scanned against `select` — in the
+    preliminary dedup pass when active *and* in this function's own paginated query
+    (restricted, in that case, to the much smaller `dedup_winners` set) — so a caller
+    can drive a console progress bar that keeps advancing across either phase, without
+    either query's duration depending on it (this function itself has no Rich
+    dependency).
+
     Raises:
         DatabaseError: write failed.
     """
     if select.one_subtitle_per_title:
-        _prepare_dedup_winners(catalog_conn, select)
+        _prepare_dedup_winners(catalog_conn, select, on_progress)
 
     repo = RunFilesRepository(run_conn)
     added = 0
@@ -104,10 +112,9 @@ def enqueue(
                 limit=_ENQUEUE_BATCH_SIZE,
                 dedup_active=select.one_subtitle_per_title,
             )
-            batch = [
-                (int(row["file_id"]), str(row["rel_path"]))
-                for row in catalog_conn.execute(query, params)
-            ]
+            cursor = catalog_conn.execute(query, params)
+            rows = cursor if on_progress is None else _counting(cursor, on_progress)
+            batch = [(int(row["file_id"]), str(row["rel_path"])) for row in rows]
             if not batch:
                 break
             after_id = batch[-1][0]
@@ -280,7 +287,11 @@ def _group_key(row: sqlite3.Row) -> tuple[int, str]:
     return int(row["imdb_id"]), str(row["language"])
 
 
-def _prepare_dedup_winners(catalog_conn: sqlite3.Connection, select: "SelectConfig") -> None:
+def _prepare_dedup_winners(
+    catalog_conn: sqlite3.Connection,
+    select: "SelectConfig",
+    on_progress: "Callable[[], None] | None" = None,
+) -> None:
     """Stages, in a temp table, the winning `file_id` of every `(imdb_id, language)` group.
 
     A dedicated read-then-write pass, run once before `enqueue`'s own paginated loop
@@ -301,6 +312,10 @@ def _prepare_dedup_winners(catalog_conn: sqlite3.Connection, select: "SelectConf
     should simply be rerun to get a meaningful ranking, but a stale catalog must still
     produce a deterministic (if degraded) result rather than crash the whole search.
 
+    `on_progress`, if given, fires once per row read from `_grouping_query`'s cursor —
+    this is the scan `enqueue`'s own docstring refers to as the dominant cost when
+    deduplication is active, since it is unpaginated and reads every matching row.
+
     Raises:
         DatabaseError: write failed.
     """
@@ -309,8 +324,9 @@ def _prepare_dedup_winners(catalog_conn: sqlite3.Connection, select: "SelectConf
 
     query, params = _grouping_query(select)
     cursor = catalog_conn.execute(query, params)
+    rows = cursor if on_progress is None else _counting(cursor, on_progress)
     batch: list[tuple[int]] = []
-    for _key, group in itertools.groupby(cursor, key=_group_key):
+    for _key, group in itertools.groupby(rows, key=_group_key):
         candidates = (
             Candidate(
                 file_id=int(row["file_id"]),
@@ -343,3 +359,12 @@ def _flush_dedup_winners(catalog_conn: sqlite3.Connection, batch: list[tuple[int
 def _placeholders(count: int) -> str:
     """``?, ?, ...`` for a dynamically-sized ``IN (...)`` clause."""
     return ", ".join(["?"] * count)
+
+
+def _counting(
+    rows: "Iterator[sqlite3.Row]", on_progress: "Callable[[], None]"
+) -> "Iterator[sqlite3.Row]":
+    """Wraps a row cursor to fire `on_progress` once per row, before it is consumed."""
+    for row in rows:
+        on_progress()
+        yield row

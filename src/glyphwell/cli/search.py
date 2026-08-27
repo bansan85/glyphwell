@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TaskID, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from glyphwell.cli.context import get_context
@@ -126,8 +127,54 @@ def run(
             catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=effective
         )
         _install_sigint_handler(engine)
-        outcome = engine.start(loaded, limit=limit)
+        outcome = _start_with_queue_progress(engine, loaded, limit=limit)
     _report_outcome(outcome, run_database=run_db_path)
+
+
+def _start_with_queue_progress(
+    engine: SearchEngine, loaded: "LoadedManifest", *, limit: int | None
+) -> SearchOutcome:
+    """Runs the search, showing a progress bar while the work queue is built.
+
+    The bar starts lazily on the first callback: a manifest hash matching an existing
+    unfinished run skips `enqueue` entirely (see `SearchEngine.start`), and no bar
+    should appear for a scan that never happens. It is closed as soon as `enqueue`
+    itself returns (`on_enqueue_done`), not only once the whole search finishes —
+    otherwise it would stay open, its elapsed time still ticking, throughout file
+    processing too. The `finally` block is the fallback for the rarer path where
+    `enqueue` raises before that callback fires.
+    """
+    progress = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed:,} file(s) scanned"),
+        TimeElapsedColumn(),
+        console=console,
+    )
+    task: TaskID | None = None
+
+    def on_progress() -> None:
+        nonlocal task
+        if task is None:
+            progress.start()
+            task = progress.add_task("building the work queue", total=None)
+        progress.advance(task)
+
+    def stop_progress() -> None:
+        nonlocal task
+        if task is not None:
+            progress.stop()
+            task = None
+
+    try:
+        return engine.start(
+            loaded,
+            limit=limit,
+            on_enqueue_progress=on_progress,
+            on_enqueue_done=stop_progress,
+        )
+    finally:
+        stop_progress()
 
 
 def _install_sigint_handler(engine: SearchEngine) -> None:

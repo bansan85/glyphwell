@@ -51,7 +51,7 @@ from glyphwell.types import ImdbId
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
     from glyphwell.config import Settings
     from glyphwell.corpus.chunker import Chunk
@@ -123,7 +123,14 @@ class SearchEngine:
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
 
-    def start(self, manifest: "LoadedManifest", *, limit: int | None = None) -> SearchOutcome:
+    def start(
+        self,
+        manifest: "LoadedManifest",
+        *,
+        limit: int | None = None,
+        on_enqueue_progress: "Callable[[], None] | None" = None,
+        on_enqueue_done: "Callable[[], None] | None" = None,
+    ) -> SearchOutcome:
         """Creates a search, builds its queue, then runs it.
 
         If a search already exists for this manifest hash and is not finished, it is
@@ -132,6 +139,12 @@ class SearchEngine:
         Args:
             manifest: validated manifest.
             limit: maximum number of files to process, for a trial run.
+            on_enqueue_progress: forwarded to `planner.enqueue` — fires once per file
+                scanned while building the queue, for a caller-driven progress bar.
+            on_enqueue_done: fires once, right after `planner.enqueue` returns —
+                including when it raises no error but the queue ends up empty — so a
+                caller can close the progress bar before file processing starts,
+                rather than only once this whole method returns.
 
         Raises:
             SearchError: empty queue, or corpus not indexed.
@@ -152,7 +165,14 @@ class SearchEngine:
             model=manifest.model,
         )
         _log.info("created run %d for manifest %s", run_id, manifest.path)
-        return self._run(run_id, manifest.manifest, limit=limit, rebuild_queue=True)
+        return self._run(
+            run_id,
+            manifest.manifest,
+            limit=limit,
+            rebuild_queue=True,
+            on_enqueue_progress=on_enqueue_progress,
+            on_enqueue_done=on_enqueue_done,
+        )
 
     def resume(self, run_id: int, *, limit: int | None = None) -> SearchOutcome:
         """Resumes an interrupted search.
@@ -264,19 +284,30 @@ class SearchEngine:
         *,
         limit: int | None,
         rebuild_queue: bool,
+        on_enqueue_progress: "Callable[[], None] | None" = None,
+        on_enqueue_done: "Callable[[], None] | None" = None,
     ) -> SearchOutcome:
         """Shared driving logic for `start` and `resume`: enqueue if needed, then process.
 
         `rebuild_queue` is false on a resume: the queue was already fully populated by
         the run's original `start()`, and re-running `planner.enqueue`'s corpus-wide join
         on every resume would pay its full cost again for zero new rows. `start()` always
-        passes true, since a freshly created run has no queue yet.
+        passes true, since a freshly created run has no queue yet — `on_enqueue_progress`
+        and `on_enqueue_done` are therefore only ever consulted in that case.
         """
         runs = RunsRepository(self.run_conn)
         runs.set_status(run_id, RunStatus.RUNNING)
         if rebuild_queue:
             _log.info("building the work queue (select filters)")
-            planner.enqueue(self.catalog_conn, self.run_conn, run_id=run_id, select=manifest.select)
+            planner.enqueue(
+                self.catalog_conn,
+                self.run_conn,
+                run_id=run_id,
+                select=manifest.select,
+                on_progress=on_enqueue_progress,
+            )
+            if on_enqueue_done is not None:
+                on_enqueue_done()
 
         done, planned = planner.plan_size(self.run_conn, run_id)
         if planned == 0:

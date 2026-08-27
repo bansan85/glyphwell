@@ -191,6 +191,81 @@ def test_start_processes_every_chunk_of_every_file(tmp_path: Path) -> None:
     assert client.calls == 2
 
 
+def test_start_forwards_on_enqueue_progress_to_the_planner(tmp_path: Path) -> None:
+    """`start` threads its `on_enqueue_progress` callback down to `planner.enqueue`,
+    which fires it once per file scanned while building the queue — here twice, once
+    each for the dedup pre-pass and the paginated write loop over its sole winner (see
+    `test_enqueue_reports_progress_once_per_scanned_row`)."""
+    settings = Settings(data_dir=tmp_path / "data", _env_file=None)
+    settings.ensure_directories()
+    archive_path = _build_archive(tmp_path)
+    calls = 0
+
+    def on_progress() -> None:
+        nonlocal calls
+        calls += 1
+
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
+        client = _FakeLlmClient()
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
+        engine.start(load(_write_manifest(tmp_path)), on_enqueue_progress=on_progress)
+
+    assert calls == 2
+
+
+def test_start_fires_on_enqueue_done_before_processing_files(tmp_path: Path) -> None:
+    """`on_enqueue_done` must fire right after `enqueue` returns, not only once the
+    whole search finishes — otherwise a caller-driven progress bar would stay open
+    (and its elapsed time would keep ticking) throughout file processing too."""
+    settings = Settings(data_dir=tmp_path / "data", _env_file=None)
+    settings.ensure_directories()
+    archive_path = _build_archive(tmp_path)
+    events: list[str] = []
+
+    def on_enqueue_done() -> None:
+        events.append("enqueue done")
+
+    class _RecordingLlmClient(_FakeLlmClient):
+        @override
+        def complete(
+            self,
+            *,
+            model: str,
+            user: str,
+            system: str | None = None,
+            options: Mapping[str, JsonValue] | None = None,
+            json_schema: Mapping[str, JsonValue] | None = None,
+        ) -> Completion:
+            events.append("chunk completed")
+            return super().complete(
+                model=model, user=user, system=system, options=options, json_schema=json_schema
+            )
+
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
+        client = _RecordingLlmClient()
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
+        engine.start(load(_write_manifest(tmp_path)), on_enqueue_done=on_enqueue_done)
+
+    assert events[0] == "enqueue done"
+    assert "chunk completed" in events
+
+
 def test_start_creates_a_new_run_when_the_previous_one_is_done(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", _env_file=None)
     settings.ensure_directories()

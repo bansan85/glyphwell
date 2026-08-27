@@ -291,3 +291,50 @@ def test_iter_work_reflects_enqueued_rel_path_order(
 
     assert [file.rel_path for file in planned] == sorted(file.rel_path for file in planned)
     assert len(planned) == 3
+
+
+def test_enqueue_reports_progress_once_per_scanned_row(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection
+) -> None:
+    """With deduplication active, `on_progress` fires once per row of the dedup pre-pass
+    scan — the dominant cost `enqueue`'s docstring describes — and again once per row of
+    the paginated write loop, which (restricted to `dedup_winners`) rescans the same 5
+    rows here since none of these titles has a competing translation."""
+    _seed_files(catalog_db, 5)
+    run_id = _create_run(run_db)
+    calls = 0
+
+    def on_progress() -> None:
+        nonlocal calls
+        calls += 1
+
+    planner.enqueue(
+        catalog_db, run_db, run_id=run_id, select=SelectConfig(), on_progress=on_progress
+    )
+
+    assert calls == 10
+
+
+def test_enqueue_reports_progress_without_deduplication(
+    catalog_db: sqlite3.Connection, run_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With deduplication disabled, `on_progress` still fires once per row — this time
+    from `enqueue`'s own paginated query, across several pages."""
+    monkeypatch.setattr(planner, "_ENQUEUE_BATCH_SIZE", 2)
+    _seed_files(catalog_db, 5)
+    run_id = _create_run(run_db)
+    calls = 0
+
+    def on_progress() -> None:
+        nonlocal calls
+        calls += 1
+
+    planner.enqueue(
+        catalog_db,
+        run_db,
+        run_id=run_id,
+        select=SelectConfig(one_subtitle_per_title=False),
+        on_progress=on_progress,
+    )
+
+    assert calls == 5
