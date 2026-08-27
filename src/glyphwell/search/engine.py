@@ -95,6 +95,7 @@ class _FileState:
     chunks: "Iterator[Chunk]"
     title: "Title | None"
     imdb_id: ImdbId
+    total_chunks: int
 
 
 @dataclass(slots=True)
@@ -238,10 +239,14 @@ class SearchEngine:
                 except OllamaError as exc:
                     run_files.mark_error(run_id, file_id, str(exc))
                     _log.warning(
-                        "chunk %d of file %d (%s) failed, file marked error: %s",
+                        "chunk %d/%d of file %d (%s, sentences %d-%d) failed,"
+                        " file marked error: %s",
                         chunk.index,
+                        state.total_chunks,
                         file_id,
                         state.rel_path,
+                        chunk.first.index,
+                        chunk.last.index,
                         exc,
                     )
                     return counters.chunks_done + counters.chunks_skipped
@@ -249,6 +254,7 @@ class SearchEngine:
                     self.run_conn,
                     run_id=run_id,
                     file_id=file_id,
+                    total_chunks=state.total_chunks,
                     chunk=chunk,
                     manifest=manifest,
                     completion=completion,
@@ -407,10 +413,14 @@ class SearchEngine:
                         except OllamaError as exc:
                             run_files.mark_error(run_id, file_id, str(exc))
                             _log.warning(
-                                "chunk %d of file %d (%s) failed, file marked error: %s",
+                                "chunk %d/%d of file %d (%s, sentences %d-%d) failed,"
+                                " file marked error: %s",
                                 chunk.index,
+                                state.total_chunks,
                                 file_id,
                                 state.rel_path,
+                                chunk.first.index,
+                                chunk.last.index,
                                 exc,
                             )
                             state.stream.close()
@@ -421,6 +431,7 @@ class SearchEngine:
                             self.run_conn,
                             run_id=run_id,
                             file_id=file_id,
+                            total_chunks=state.total_chunks,
                             chunk=chunk,
                             manifest=manifest,
                             completion=completion,
@@ -512,6 +523,24 @@ def _get_archive(
     return archive
 
 
+def _total_chunks(archive: CorpusArchive, rel_path: str, *, token_budget: int, overlap: int) -> int:
+    """Total chunk count for the whole file, for progress display only.
+
+    A second, throwaway pass of the same deterministic chunker (`iter_chunks`), always
+    from the file's first sentence regardless of any resume position — so the total
+    reads the same whether the file is fresh or being resumed partway through.
+
+    Raises:
+        CorpusError: the member cannot be reopened, or is unreadably malformed.
+    """
+    stream = archive.open_member(rel_path)
+    try:
+        chunks = iter_chunks(iter_sentences(stream), token_budget=token_budget, overlap=overlap)
+        return sum(1 for _ in chunks)
+    finally:
+        stream.close()
+
+
 def _open_file(
     catalog_conn: "sqlite3.Connection",
     run_conn: "sqlite3.Connection",
@@ -567,6 +596,16 @@ def _open_file(
         num_ctx=num_ctx, num_predict=num_predict, overhead_text=overhead_text
     )
 
+    try:
+        total_chunks = _total_chunks(
+            archive, file_row.rel_path, token_budget=token_budget, overlap=manifest.chunk.overlap
+        )
+    except CorpusError as exc:
+        stream.close()
+        RunFilesRepository(run_conn).mark_error(run_id, file_id, str(exc))
+        _log.warning("could not read %s: %s", file_row.rel_path, exc)
+        return None
+
     sentences = iter_sentences(stream, start_index=start_index)
     chunks = iter_chunks(
         sentences,
@@ -575,11 +614,12 @@ def _open_file(
         start_chunk_index=start_chunk_index,
     )
     _log.debug(
-        "opening %s (file %d): resuming at sentence %d, chunk %d",
+        "opening %s (file %d): resuming at sentence %d, chunk %d/%d",
         file_row.rel_path,
         file_id,
         start_index,
         start_chunk_index,
+        total_chunks,
     )
     return _FileState(
         file_id=file_id,
@@ -588,6 +628,7 @@ def _open_file(
         chunks=chunks,
         title=title,
         imdb_id=file_row.imdb_id,
+        total_chunks=total_chunks,
     )
 
 
@@ -620,7 +661,14 @@ def _next_evaluable_chunk(
                 latency_ms=None,
             )
             counters.chunks_skipped += 1
-            _log.debug("chunk %d of file %d: skipped by the pre-filter", chunk.index, file_id)
+            _log.debug(
+                "chunk %d/%d of file %d (sentences %d-%d): skipped by the pre-filter",
+                chunk.index,
+                state.total_chunks,
+                file_id,
+                chunk.first.index,
+                chunk.last.index,
+            )
             continue
         return chunk
     return None
@@ -647,7 +695,14 @@ def _complete_chunk(
     A free function (not a method) so it can be handed to `ThreadPoolExecutor.submit`
     without capturing `self`.
     """
-    _log.debug("chunk %d of file %d", chunk.index, state.file_id)
+    _log.debug(
+        "chunk %d/%d of file %d: sentences %d-%d",
+        chunk.index,
+        state.total_chunks,
+        state.file_id,
+        chunk.first.index,
+        chunk.last.index,
+    )
     context = render_context(chunk=chunk, title=state.title, imdb_id=state.imdb_id)
     system = None if manifest.prompt.system is None else render(manifest.prompt.system, context)
     user = render(manifest.prompt.user, context)
@@ -723,17 +778,39 @@ def _format_match(payload: "JsonObject", *, output: "OutputConfig") -> str:
     return "\n\n".join(blocks) if blocks else repr(payload)
 
 
+def _token_summary(completion: "Completion", *, num_ctx: int, num_predict: int) -> str:
+    """Renders a completion's token usage against the manifest's own budget.
+
+    Ollama reports `prompt_eval_count`/`eval_count` on the response itself — no separate
+    call needed — but older servers can omit either field, hence the placeholder. Showing
+    the raw counts alone would say little: what answers "was this chunk sized well?" is
+    how close the prompt came to `options.num_ctx` and the response to `options.num_predict`
+    — the two budgets `glyphwell.tokens.chunk_token_budget` sizes chunks against (ADR-0021).
+    A completion far under either wastes headroom sizing could reclaim; one flirting with
+    `num_predict` risks the mid-JSON truncation that budget exists to avoid.
+    """
+    if completion.prompt_tokens is None or completion.completion_tokens is None:
+        return "tokens n/a"
+    return (
+        f"prompt {completion.prompt_tokens}/{num_ctx} ({completion.prompt_tokens / num_ctx:.0%}),"
+        f" completion {completion.completion_tokens}/{num_predict}"
+        f" ({completion.completion_tokens / num_predict:.0%})"
+    )
+
+
 def _commit_completion(
     run_conn: "sqlite3.Connection",
     *,
     run_id: int,
     file_id: int,
+    total_chunks: int,
     chunk: "Chunk",
     manifest: SearchManifest,
     completion: "Completion",
     counters: _Counters,
 ) -> None:
     """Validates a model response and commits it, updating the running counters."""
+    num_ctx, num_predict = manifest.ollama_context_options()
     lines_by_id = {sentence.id: sentence.text for sentence in chunk.sentences}
     validated = validate_output(
         completion.text,
@@ -756,20 +833,35 @@ def _commit_completion(
         counters.matches += 1
         if validated.payload is None:
             _log.debug(
-                "chunk %d of file %d: matched (%dms)", chunk.index, file_id, completion.latency_ms
+                "chunk %d/%d of file %d (sentences %d-%d): matched (%dms, %s)",
+                chunk.index,
+                total_chunks,
+                file_id,
+                chunk.first.index,
+                chunk.last.index,
+                completion.latency_ms,
+                _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
             )
         else:
             _log.debug(
-                "chunk %d of file %d: matched (%dms):\n%s",
+                "chunk %d/%d of file %d (sentences %d-%d): matched (%dms, %s):\n%s",
                 chunk.index,
+                total_chunks,
                 file_id,
+                chunk.first.index,
+                chunk.last.index,
                 completion.latency_ms,
+                _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
                 _format_match(validated.payload, output=manifest.output),
             )
     else:
         _log.debug(
-            "chunk %d of file %d: no match (%dms)",
+            "chunk %d/%d of file %d (sentences %d-%d): no match (%dms, %s)",
             chunk.index,
+            total_chunks,
             file_id,
+            chunk.first.index,
+            chunk.last.index,
             completion.latency_ms,
+            _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
         )

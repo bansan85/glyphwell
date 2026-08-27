@@ -211,6 +211,25 @@ below sit under `Unreleased`.
   for an `output.schema` that doesn't nest an `excerpt`. `ollama/client.py` logs each
   call's latency at `DEBUG` and now logs a retry attempt at `WARNING` instead of
   sleeping through the backoff with no visible cause.
+- Every per-chunk `DEBUG` line (submitted, pre-filtered, matched, no match, or failed)
+  now names the sentence range it covers — `chunk.first.index`-`chunk.last.index`, the
+  reader's own contiguous position rather than the corpus's possibly-gapped `<s id>`
+  (see §7 item 5 of `CLAUDE.md`) — instead of only `chunk_index`, which said nothing
+  about where in the file that chunk actually fell, and now also names the file's total
+  chunk count (`chunk 3/12 of file 969477`, not just `chunk 3`). The total comes from
+  `search/engine.py`'s new `_total_chunks`, a second, throwaway pass of `iter_chunks`
+  over the file's first sentence onward — deliberately independent of any resume
+  position, so the total reads the same whether the file is fresh or resumed partway
+  through, at the cost of reading the file's XML twice per run (once to count, once to
+  actually process) instead of once. `ollama.Completion` gained
+  `prompt_tokens`/`completion_tokens`, read straight off Ollama's own response
+  (`prompt_eval_count`/`eval_count` — no extra call needed), and the matched/no-match
+  `DEBUG` lines now report them against the manifest's own `options.num_ctx`/
+  `num_predict` (e.g. `prompt 1840/8192 (22%), completion 96/512 (19%)`) — the same two
+  budgets `glyphwell.tokens.chunk_token_budget` sizes chunks against (ADR-0021), so the
+  log line doubles as a live check of whether a manifest's chunking is well-tuned rather
+  than just raw counts with nothing to compare them to. Falls back to `tokens n/a` for
+  an older server that omits the fields.
 - `search/results.py`: `validate_output` re-checks a response against the manifest's
   schema and resolves `match_when`, independently of the `format` constraint already
   requested from Ollama (ADR-0013). Wherever the response nests an `excerpt_ids` field

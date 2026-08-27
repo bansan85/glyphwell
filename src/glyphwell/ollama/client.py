@@ -48,12 +48,18 @@ class Completion:
             for text output.
         model: model that actually answered, as reported by the server.
         latency_ms: call duration, useful to estimate the remainder of a search.
+        prompt_tokens: tokens the server counted in the rendered prompt (Ollama's
+            `prompt_eval_count`), `None` if the server's response omitted it.
+        completion_tokens: tokens the server generated for the response (Ollama's
+            `eval_count`), `None` if the server's response omitted it.
     """
 
     text: str
     payload: JsonObject | None
     model: str
     latency_ms: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class LlmClient(Protocol):
@@ -126,7 +132,12 @@ class OllamaClient:
         text = response.message.content or ""
         payload = _decode_json_payload(text) if json_schema is not None else None
         return Completion(
-            text=text, payload=payload, model=response.model or model, latency_ms=latency_ms
+            text=text,
+            payload=payload,
+            model=response.model or model,
+            latency_ms=latency_ms,
+            prompt_tokens=response.prompt_eval_count,
+            completion_tokens=response.eval_count,
         )
 
     def _chat_with_retries(
