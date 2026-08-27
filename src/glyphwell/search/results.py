@@ -66,19 +66,24 @@ def validate_output(
         raw: text returned by the model.
         output: manifest output configuration.
         match_when: name of the boolean field determining the match.
-        lines_by_id: the chunk's own sentences, keyed by id. Wherever the response nests
-            an ``excerpt_ids`` array, the sibling ``excerpt`` field is rebuilt from these
-            lines (joined with ``\\n``) rather than trusted from the model: citing ids it
-            already read is a far smaller generation than reproducing their text
-            verbatim, and rebuilding it here guarantees an exact quote.
+        lines_by_id: the chunk's own sentences, keyed by id, in chunk order. Wherever the
+            response nests a sibling ``excerpt_start_id``/``excerpt_end_id`` pair, the
+            ``excerpt`` field is rebuilt from these lines (every line from the first id to
+            the second, inclusive, joined with ``\\n``) rather than trusted from the
+            model: citing the ends of a range it already read is a far smaller generation
+            than reproducing the text verbatim, and rebuilding it here guarantees an exact
+            quote. The range is resolved by each id's *position* in `lines_by_id`, not by
+            integer arithmetic on the id values — a sentence id is an opaque ordinal, not
+            necessarily contiguous (see `CLAUDE.md`).
 
     Returns:
         The validated response.
 
     Raises:
         ModelOutputError: unreadable JSON, non-conforming to the schema, `match_when`
-            field missing or not boolean, or an `excerpt_ids` entry that is not an
-            integer or does not cite a line of the chunk.
+            field missing or not boolean, or an `excerpt_start_id`/`excerpt_end_id` that
+            is not an integer, does not cite a line of the chunk, or names a range whose
+            start comes after its end.
     """
     if output.format == "text":
         # `SearchManifest` forbids `match_when` together with `format = text`: nothing
@@ -116,13 +121,16 @@ def _reconstruct_excerpts(
     payload: JsonObject, *, lines_by_id: "Mapping[SentenceId, str]"
 ) -> JsonObject:
     """Rebuilds every ``excerpt`` field nested anywhere in `payload` from its sibling
-    ``excerpt_ids``, discarding whatever the model returned there.
+    ``excerpt_start_id``/``excerpt_end_id`` pair, discarding whatever the model returned
+    there.
     """
     rebuilt: JsonObject = {
         key: _rebuild_excerpts(item, lines_by_id=lines_by_id) for key, item in payload.items()
     }
-    if "excerpt_ids" in rebuilt:
-        rebuilt["excerpt"] = _join_cited_lines(rebuilt["excerpt_ids"], lines_by_id=lines_by_id)
+    if "excerpt_start_id" in rebuilt and "excerpt_end_id" in rebuilt:
+        rebuilt["excerpt"] = _join_line_range(
+            rebuilt["excerpt_start_id"], rebuilt["excerpt_end_id"], lines_by_id=lines_by_id
+        )
     return rebuilt
 
 
@@ -137,22 +145,43 @@ def _rebuild_excerpts(
     return value
 
 
-def _join_cited_lines(ids: "JsonValue", *, lines_by_id: "Mapping[SentenceId, str]") -> str:
-    """Joins the text of every sentence cited by an ``excerpt_ids`` array, in order."""
-    if not isinstance(ids, list):
-        message = f"excerpt_ids is not an array: {ids!r}"
+def _join_line_range(
+    start_id: "JsonValue", end_id: "JsonValue", *, lines_by_id: "Mapping[SentenceId, str]"
+) -> str:
+    """Joins the text of every sentence from `start_id` to `end_id`, inclusive.
+
+    The range is resolved by each id's position in `lines_by_id` (itself in chunk order),
+    not by integer arithmetic on the id values: a sentence id is an opaque ordinal, not
+    necessarily contiguous.
+    """
+    start_key = _require_cited_int("excerpt_start_id", start_id)
+    end_key = _require_cited_int("excerpt_end_id", end_id)
+    ordered_ids = list(lines_by_id)
+    start_pos = _require_position("excerpt_start_id", start_key, ordered_ids)
+    end_pos = _require_position("excerpt_end_id", end_key, ordered_ids)
+    if start_pos > end_pos:
+        message = (
+            f"excerpt_start_id ({start_id}) comes after excerpt_end_id ({end_id}) in the excerpt"
+        )
         raise ModelOutputError(message)
-    lines: list[str] = []
-    for entry in ids:
-        if not isinstance(entry, int) or isinstance(entry, bool):
-            message = f"excerpt_ids entry is not an integer: {entry!r}"
-            raise ModelOutputError(message)
-        line = lines_by_id.get(str(entry))
-        if line is None:
-            message = f"excerpt_ids cites line {entry}, which is not part of the excerpt"
-            raise ModelOutputError(message)
-        lines.append(line)
-    return "\n".join(lines)
+    return "\n".join(lines_by_id[key] for key in ordered_ids[start_pos : end_pos + 1])
+
+
+def _require_cited_int(field: str, value: "JsonValue") -> str:
+    """Validates a cited id is a JSON integer and returns it as a `SentenceId` key."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        message = f"{field} is not an integer: {value!r}"
+        raise ModelOutputError(message)
+    return str(value)
+
+
+def _require_position(field: str, key: str, ordered_ids: "list[SentenceId]") -> int:
+    """Locates `key`'s position in `ordered_ids`, or raises if it cites no chunk line."""
+    try:
+        return ordered_ids.index(key)
+    except ValueError:
+        message = f"{field} cites line {key}, which is not part of the excerpt"
+        raise ModelOutputError(message) from None
 
 
 def export_run(

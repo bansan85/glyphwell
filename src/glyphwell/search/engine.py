@@ -774,8 +774,9 @@ def _format_match(payload: "JsonObject", *, output: "OutputConfig") -> str:
     single line previously made the two indistinguishable. Every other field follows,
     one per line; wherever a field's value is a code documented in `output.json_schema`
     via `_enum_descriptions`, its description is appended after it. Falls back to the
-    raw payload for a schema that doesn't follow the ``excerpt_ids``/``excerpt``
-    convention, so a match is never logged as an empty block.
+    raw payload for a schema that doesn't follow the ``excerpt_start_id``/
+    ``excerpt_end_id``/``excerpt`` convention, so a match is never logged as an empty
+    block.
     """
     descriptions = _enum_descriptions(output.json_schema) if output.json_schema is not None else {}
     blocks: list[str] = []
@@ -791,7 +792,7 @@ def _format_match(payload: "JsonObject", *, output: "OutputConfig") -> str:
             lines = ["    Excerpt:"]
             lines += [f"      | {sentence}" for sentence in excerpt.splitlines()]
             for key in item:
-                if key in ("excerpt", "excerpt_ids"):
+                if key in ("excerpt", "excerpt_start_id", "excerpt_end_id"):
                     continue
                 field_value = item[key]
                 if isinstance(field_value, str) and field_value in descriptions:

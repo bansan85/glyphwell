@@ -99,12 +99,11 @@ prefilter:
 #   {{ chunk }}     the chunk's lines, prefixed with their identifier
 prompt:
   system: |
-    You analyze excerpts of movie and TV subtitles for forensic research, forensic medicine analysis, and script realism verification.
-    Identify explicitly described, planned, or executed techniques used to conceal, cover up, or mask criminal acts, bodies, or evidence,
-    or to let an offense (including stalking, surveillance, or tracking a person) continue without detection. Coverage matters more than
-    a narrow reading of the categories below: a method does not need to involve violence or post-crime cleanup to qualify — using
-    ordinary, legal-looking means (public records, social media, open-source information) specifically to locate, track, or monitor
-    someone without alerting them or the authorities is itself a concealment/evasion technique.
+    You analyze movie/TV subtitle excerpts for forensic research, forensic medicine, and script realism. Identify explicitly
+    described, planned, or executed techniques that conceal, cover up, or mask a crime, body, or evidence, or let an offense
+    (stalking, surveillance, tracking) continue undetected. Read the categories broadly: violence or post-crime cleanup isn't
+    required — using legal, ordinary means (public records, social media, OSINT) specifically to locate, track, or monitor
+    someone without alerting them or authorities is itself a concealment/evasion technique.
 
     Classify each finding by concealment method:
       01 body disposal, destruction, or alteration (e.g., chemical dissolution, dismemberment, burial, cremation);
@@ -116,29 +115,28 @@ prompt:
       06 financial or identity concealment (e.g., shell companies, laundering techniques, stolen identities);
       07 other forensic evasion or obstruction methods not elsewhere classified.
 
-    Do not report simple commission of crimes unless a specific method or technique of concealment, forensic evasion, or cover-up is
-    explicitly described or discussed — a described method of locating, tracking, or monitoring someone without detection counts, even
-    outside a violent-crime context.
+    Report a crime's mere commission only if a concealment/evasion method is explicitly described — locating, tracking, or
+    monitoring someone undetected counts even outside a violent-crime context.
 
-    For each finding, write method_description as a generic, impersonal, factual
-    statement of the technique itself — phrased so it would read the same in any
-    excerpt using that technique, independent of this one:
-      - Describe it from the perpetrator's side: the action taken (or that should
-        have been taken) by the person committing or facilitating the offense, in
-        active voice (e.g., "monitoring a target's public social media activity to
-        track their location", not a neutral fact about the situation such as "public
-        account settings allow tracking"). A technique that should have been used but
-        was not is still a valid finding.
-      - Never name characters or use a pronoun tied to a specific character — keep the
-        actor implicit with a gerund phrase ("monitoring...", not "he/she monitors..."
-        or "the character reports...").
-      - Never restate or paraphrase the concealment_category's own definition —
-        method_description must add the specific technique, not repeat the category.
-      - Never include plot details, motives, or outcomes that are not themselves part
-        of the technique (what was discovered, why it mattered, how the scene
-        resolved). Keep only the method.
+    Ground every finding in its own cited lines only, in this order:
+      1. Find the tightest span of consecutive lines whose own text explicitly shows the technique (usually 1-2 lines, never
+         more than 4). If it only makes sense with the surrounding scene, narrow it further. No qualifying span → no finding,
+         however suspicious the excerpt feels.
+      2. Cite it as excerpt_start_id/excerpt_end_id (inclusive, never an id outside the excerpt). Several disjoint passages →
+         one finding per passage, each with its own narrow span; never widen one span to bridge them.
+      3. Write method_description only from that span's own text, never from a technique discussed elsewhere in the excerpt —
+         even if it's real there.
 
-    Quote only lines present in the excerpt.
+    Write method_description as a generic, impersonal, factual statement of the technique — phrased to read the same in any
+    excerpt using it:
+      - Perpetrator's side, active voice, gerund phrase (e.g. "monitoring a target's public social media activity to track
+        their location", not "public account settings allow tracking"). A technique that should have been used but wasn't
+        still counts.
+      - No character names, nicknames, or pronouns — perpetrator, target, or anyone else. Use role words instead ("a target",
+        "an acquaintance", "a third party"), never a name (not "Mr. Homeless Guy", not "the boss").
+      - Never restate concealment_category's own definition — add the specific technique, don't repeat the category.
+      - No plot, motive, or outcome — only the method.
+
     Answer only with a JSON object matching the requested schema.
 
   user: |
@@ -150,6 +148,8 @@ prompt:
     Identify explicit methods or techniques used to conceal criminal acts, evade forensic detection, or track/monitor a
     person without detection.
     If no concealment or evasion method is explicitly described, return "matched": false.
+    Keep each excerpt_start_id/excerpt_end_id span tight (at most 4 lines), and write method_description only from what that
+    exact span shows.
 # --------------------------------------------------------------------------------------
 # Expected output
 # --------------------------------------------------------------------------------------
@@ -168,11 +168,18 @@ output:
         items:
           type: object
           properties:
-            excerpt_ids:
-              type: array
-              items:
-                type: integer
-              description: Minimum set of line IDs necessary to support the finding. Every ID must refer to a line present in the excerpt.
+            excerpt_start_id:
+              type: integer
+              description: >-
+                ID of the first line of the tightest possible span of consecutive lines whose own text explicitly shows the
+                technique — most findings need only one or two lines. Must refer to a line present in the excerpt.
+            excerpt_end_id:
+              type: integer
+              description: >-
+                ID of the last line of that span (inclusive), on or after excerpt_start_id and never more than 4 lines after it.
+                Must refer to a line present in the excerpt. If the evidence for this technique spans several separate passages
+                rather than one continuous exchange, report each passage as its own finding with its own narrow span instead of
+                stretching one range to cover the gap between them.
             concealment_category:
               type: string
               enum: ["01", "02", "03", "04", "05", "06", "07"]
@@ -197,7 +204,8 @@ output:
                 pronouns, no restatement of concealment_category's definition, no plot
                 details or outcomes beyond the method.
           required:
-            - excerpt_ids
+            - excerpt_start_id
+            - excerpt_end_id
             - concealment_category
             - method_description
           additionalProperties: false

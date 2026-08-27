@@ -106,14 +106,26 @@ of mixing answers produced by two different prompts (ADR-0004).
 
 ### Citing lines instead of quoting them
 
-Wherever `output.schema` nests a field named `excerpt_ids` (an array of the cited
-sentence ids — see `findings` in `searches/example.yaml`), glyphwell reconstructs a
-sibling `excerpt` field itself from the chunk's own text (the cited lines, joined with
-`\n`) instead of asking the model to reproduce them verbatim. Drop `excerpt` from that
-object's `properties`/`required` entirely: citing ids it already has in context is a much
-smaller generation than an exact quote, and reconstructing it locally guarantees the
-quote is exact. An id that doesn't refer to a line of the chunk is rejected the same way
-as any other schema violation (`ModelOutputError`).
+Wherever `output.schema` nests a sibling `excerpt_start_id`/`excerpt_end_id` pair (two
+integers, the first and last line id of one continuous, inclusive range — see `findings`
+in `searches/example.yaml`), glyphwell reconstructs a sibling `excerpt` field itself from
+the chunk's own text (every line from `excerpt_start_id` to `excerpt_end_id`, inclusive,
+joined with `\n`) instead of asking the model to reproduce them verbatim. Drop `excerpt`
+from that object's `properties`/`required` entirely: citing the ends of a range it
+already has in context is a much smaller generation than an exact quote, and
+reconstructing it locally guarantees the quote is exact.
+
+The range is resolved by each id's *position* among the chunk's own sentences, never by
+arithmetic on the id values themselves — a sentence id is an opaque ordinal, not
+necessarily contiguous (see `CLAUDE.md`). An id that doesn't refer to a line of the chunk,
+or a start that comes after its end in chunk order, is rejected the same way as any other
+schema violation (`ModelOutputError`).
+
+If the evidence for one finding spans several disjoint passages rather than one
+continuous exchange, the schema's field descriptions (and the manifest's own prompt, see
+`searches/example.yaml`) ask the model to report each passage as its own finding with its
+own narrower range, instead of stretching one range to bridge the gap between them —
+`findings` is already an array for exactly this reason.
 
 ### Choosing a model
 
@@ -240,9 +252,10 @@ filters or run `corpus index` first.
 
 **A model response is rejected (`ModelOutputError`)** — either the response did not
 conform to `output.schema` even though it was requested from Ollama (ADR-0013), or, for a
-schema using the `excerpt_ids` convention (*Citing lines instead of quoting them* above),
-an id did not refer to a line of the chunk. The file is marked in error and the rest of
-the run continues; see *Choosing a model* above if this happens often.
+schema using the `excerpt_start_id`/`excerpt_end_id` convention (*Citing lines instead of
+quoting them* above), an id did not refer to a line of the chunk, or the range was
+inverted (start after end). The file is marked in error and the rest of the run
+continues; see *Choosing a model* above if this happens often.
 
 A response that is not even syntactically valid JSON is handled separately, before it
 ever reaches this error: it is almost always a completion cut off mid-string because it

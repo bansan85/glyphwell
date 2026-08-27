@@ -246,13 +246,15 @@ below sit under `Unreleased`.
   an older server that omits the fields.
 - `search/results.py`: `validate_output` re-checks a response against the manifest's
   schema and resolves `match_when`, independently of the `format` constraint already
-  requested from Ollama (ADR-0013). Wherever the response nests an `excerpt_ids` field
-  (an array of cited sentence ids), `validate_output` now reconstructs the sibling
-  `excerpt` field itself from the chunk's own sentence text (joined with `\n`) instead of
-  trusting the model to reproduce it verbatim, raising `ModelOutputError` if an id does
-  not refer to a line of the chunk. A citation-heavy schema, like the `findings` array in
-  `searches/example.yaml`, no longer has to ask the model to generate `excerpt` at all,
-  cutting how much it must generate per finding.
+  requested from Ollama (ADR-0013). Wherever the response nests a sibling
+  `excerpt_start_id`/`excerpt_end_id` pair (the first and last line id of one continuous,
+  inclusive range), `validate_output` now reconstructs the sibling `excerpt` field itself
+  from the chunk's own sentence text (every line in the range, joined with `\n`) instead
+  of trusting the model to reproduce it verbatim, raising `ModelOutputError` if either id
+  does not refer to a line of the chunk or the range is inverted (ADR-0023). A
+  citation-heavy schema, like the `findings` array in `searches/example.yaml`, no longer
+  has to ask the model to generate `excerpt` at all, cutting how much it must generate per
+  finding.
 - `SubtitleFilesRepository`, `RunsRepository`, `RunFilesRepository`, and
   `ResultsRepository` (`db/repositories.py`) are now implemented, alongside two additions
   the engine needed beyond the original stub signatures: `SubtitleFilesRepository.get`
@@ -339,6 +341,15 @@ breaking changes for users. They do change names that were already committed.
   `--dry-run` preview path converts the other way (`imdb_id_to_int(entry.imdb_id)`) to
   compare a corpus entry's canonical string id against the manifest's numeric filter.
   `searches/example.yaml` updated to match.
+- **The `excerpt_ids` citation convention is now `excerpt_start_id`/`excerpt_end_id`.**
+  A flat array of individually cited ids let disjoint, unrelated mentions get glued into
+  one misleadingly "contiguous" excerpt (e.g. `excerpt_ids: [994, 996, 1021, 1036, 1043,
+  1044]`, six ids spread across a 50-line span). Two scalar fields — the first and last
+  line id of one continuous range — make the model's grouping choice explicit instead:
+  one finding with a wide range for a genuinely continuous passage, several findings with
+  narrower ranges for disjoint ones, using the `findings` array that already existed for
+  multiple distinct techniques (ADR-0023). `searches/example.yaml`'s schema and prompt,
+  and `search/results.py`'s reconstruction logic, updated to match.
 
 ### Removed
 

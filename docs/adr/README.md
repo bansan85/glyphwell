@@ -33,6 +33,7 @@ recorded here.
 | [0020](0020-deduplicate-subtitle-translations-by-size.md) | Deduplicate subtitle translations by size | Accepted | 2026-08-26 |
 | [0021](0021-token-budget-chunking.md) | Size chunks from a token budget, not a fixed sentence count | Accepted | 2026-08-27 |
 | [0022](0022-calibrate-the-response-ratio-from-observed-completions.md) | Calibrate the response ratio from a run's own observed completions | Accepted | 2026-08-27 |
+| [0023](0023-cite-excerpts-by-line-range-not-id-list.md) | Cite excerpts by a line range, not a flat id list | Accepted | 2026-08-27 |
 
 ## Statuses
 
