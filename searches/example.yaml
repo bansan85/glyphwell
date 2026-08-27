@@ -67,7 +67,7 @@ select:
 # chunk of work. Keep `overlap` modest relative to how many sentences typically fit in the
 # budget — a large overlap on a tightly-filled chunk repeats most of it into the next one.
 chunk:
-  overlap: 12
+  overlap: 5
 
 # --------------------------------------------------------------------------------------
 # Prefilter — evaluated locally, before any call to the model
@@ -100,42 +100,48 @@ prefilter:
 prompt:
   system: |
     You analyze movie/TV subtitle excerpts for forensic research, forensic medicine, and script realism. Identify explicitly
-    described, planned, or executed techniques that conceal, cover up, or mask a crime, body, or evidence, or let an offense
-    (stalking, surveillance, tracking) continue undetected. Read the categories broadly: violence or post-crime cleanup isn't
-    required — using legal, ordinary means (public records, social media, OSINT) specifically to locate, track, or monitor
-    someone without alerting them or authorities is itself a concealment/evasion technique.
+    described techniques — planned, executed, or raised hypothetically — that conceal, cover up, or mask a crime, body, or
+    evidence, or let an offense (stalking, surveillance, tracking) continue undetected. A hypothetical line still counts if
+    it names a concrete technique or a concrete illegal threat/act (e.g. "what if someone followed you home" counts; idle
+    chit-chat does not). Ordinary legal means (public records, social media, OSINT) count only when the excerpt itself
+    manifestly shows covert use to enable an illegal act (stalking, evading capture, hiding a crime) — unmarked or routine
+    research does not count. Who performs the act doesn't matter (perpetrator, investigator, victim, bystander all count
+    equally) as long as the illegal framing is explicit in the text.
 
-    Classify each finding by concealment method:
-      01 body disposal, destruction, or alteration (e.g., chemical dissolution, dismemberment, burial, cremation);
-      02 chemical or physical forensic cleanup (e.g., bleaching, washing, removing biological evidence, staging scenes);
-      03 digital, electronic, or surveillance-based methods (e.g., deleting logs, wiping drives, disabling cameras, spoofing, using public
-         or online information to locate, track, or monitor a person without detection);
-      04 evidence destruction or staging (e.g., arson, planting false evidence, altering weapon signatures);
-      05 alibi creation, falsification, or witness manipulation (e.g., coercion, forging records, time-of-death manipulation);
-      06 financial or identity concealment (e.g., shell companies, laundering techniques, stolen identities);
-      07 other forensic evasion or obstruction methods not elsewhere classified.
+    Categories:
+      01 body disposal/destruction/alteration (dissolution, dismemberment, burial, cremation)
+      02 physical/chemical forensic cleanup (bleaching, removing biological evidence, staging a scene)
+      03 digital/electronic/surveillance methods (deleting logs, wiping drives, disabling cameras, spoofing, covert use of
+         public/online info to locate or monitor a target undetected)
+      04 evidence destruction/staging (arson, planting evidence, altering weapon signatures)
+      05 alibi/witness manipulation (coercion, forged records, time-of-death manipulation)
+      06 financial/identity concealment (shell companies, laundering, stolen identities)
+      07 other forensic evasion/obstruction
 
-    Report a crime's mere commission only if a concealment/evasion method is explicitly described — locating, tracking, or
-    monitoring someone undetected counts even outside a violent-crime context.
+    Do NOT report:
+      - jokes, sarcasm, or pop-culture references
+      - generic procedural exposition not tied to a specific act in the scene
+      - lines with no context, or no named technique/threat (small talk, unexplained research mentions, name banter)
+      - dreams/flashbacks of ambiguous factual status
 
-    Ground every finding in its own cited lines only, in this order:
-      1. Find the tightest span of consecutive lines whose own text explicitly shows the technique (usually 1-2 lines, never
-         more than 4). If it only makes sense with the surrounding scene, narrow it further. No qualifying span → no finding,
-         however suspicious the excerpt feels.
-      2. Cite it as excerpt_start_id/excerpt_end_id (inclusive, never an id outside the excerpt). Several disjoint passages →
-         one finding per passage, each with its own narrow span; never widen one span to bridge them.
-      3. Write method_description only from that span's own text, never from a technique discussed elsewhere in the excerpt —
-         even if it's real there.
+    Grounding: judge intent using the full excerpt, but cite only the tightest span (usually 1-2 lines, max 7) whose own
+    text names the technique or threat — as excerpt_start_id/excerpt_end_id, inclusive, never outside the excerpt. No
+    qualifying span → no finding. Disjoint passages → one finding per passage, each with its own narrow span.
+    method_description comes only from that span's text, never from a technique discussed elsewhere in the excerpt.
 
-    Write method_description as a generic, impersonal, factual statement of the technique — phrased to read the same in any
-    excerpt using it:
-      - Perpetrator's side, active voice, gerund phrase (e.g. "monitoring a target's public social media activity to track
-        their location", not "public account settings allow tracking"). A technique that should have been used but wasn't
-        still counts.
-      - No character names, nicknames, or pronouns — perpetrator, target, or anyone else. Use role words instead ("a target",
-        "an acquaintance", "a third party"), never a name (not "Mr. Homeless Guy", not "the boss").
-      - Never restate concealment_category's own definition — add the specific technique, don't repeat the category.
-      - No plot, motive, or outcome — only the method.
+    method_description: generic, impersonal, factual; perpetrator's-side, active voice, gerund phrase (e.g. "monitoring a
+    target's public social media activity to track their location"). No names/pronouns — use role words (a target, an
+    acquaintance, a third party). Never restate the category's own definition. No plot, motive, or outcome.
+
+    confidence: "high" | "medium" | "low" — how certain this is a genuine, on-topic finding rather than a false positive.
+
+    Examples:
+      + "Wipe the drive, then torch the laptop in the incinerator." → 01+03, high
+      + "If I were the killer, I'd have dissolved the body in lye." → 01, medium (hypothetical, but names a real technique)
+      + "What if some sicko had followed you down here?" → 03, medium (names a concrete threat)
+      − "You could just look her up on Instagram, everyone does that." → no illegal framing
+      − "See, this is why I do my research." → no context, no named technique
+      − banter about a nickname, no crime context → irrelevant
 
     Answer only with a JSON object matching the requested schema.
 
@@ -145,11 +151,10 @@ prompt:
 
     {{ chunk }}
 
-    Identify explicit methods or techniques used to conceal criminal acts, evade forensic detection, or track/monitor a
-    person without detection.
-    If no concealment or evasion method is explicitly described, return "matched": false.
-    Keep each excerpt_start_id/excerpt_end_id span tight (at most 4 lines), and write method_description only from what that
-    exact span shows.
+    Identify methods to conceal a crime, evade forensic detection, or track/monitor a person undetected — explicit or
+    hypothetical, as long as a real technique or concrete threat is named. Return "matched": false if none qualify.
+    Span ≤7 lines; method_description from that span only.
+
 # --------------------------------------------------------------------------------------
 # Expected output
 # --------------------------------------------------------------------------------------
@@ -162,7 +167,7 @@ output:
     properties:
       matched:
         type: boolean
-        description: True only when at least one explicit concealment, forensic evasion, or undetected tracking/monitoring method is found.
+        description: True only when at least one concealment, forensic evasion, or undetected tracking/monitoring technique is found — including one raised hypothetically, as long as a concrete technique or threat is named.
       findings:
         type: array
         items:
@@ -171,15 +176,16 @@ output:
             excerpt_start_id:
               type: integer
               description: >-
-                ID of the first line of the tightest possible span of consecutive lines whose own text explicitly shows the
-                technique — most findings need only one or two lines. Must refer to a line present in the excerpt.
+                ID of the first line of the tightest span of consecutive lines whose own text names the technique or threat —
+                usually one or two lines. Use the full excerpt to judge intent, but cite only this narrow span. Must refer to
+                a line present in the excerpt.
             excerpt_end_id:
               type: integer
               description: >-
-                ID of the last line of that span (inclusive), on or after excerpt_start_id and never more than 4 lines after it.
-                Must refer to a line present in the excerpt. If the evidence for this technique spans several separate passages
-                rather than one continuous exchange, report each passage as its own finding with its own narrow span instead of
-                stretching one range to cover the gap between them.
+                ID of the last line of that span (inclusive), on or after excerpt_start_id and never more than 7 lines after it.
+                Must refer to a line present in the excerpt. If evidence spans several separate passages rather than one
+                continuous exchange, report each passage as its own finding with its own narrow span instead of stretching one
+                range to cover the gap between them.
             concealment_category:
               type: string
               enum: ["01", "02", "03", "04", "05", "06", "07"]
@@ -190,7 +196,7 @@ output:
               x-enum-descriptions:
                 "01": body disposal, destruction, or alteration (e.g., chemical dissolution, dismemberment, burial, cremation)
                 "02": chemical or physical forensic cleanup (e.g., bleaching, washing, removing biological evidence, staging scenes)
-                "03": digital, electronic, or surveillance-based methods (e.g., deleting logs, wiping drives, disabling cameras, spoofing, using public or online information to locate, track, or monitor a person without detection)
+                "03": digital, electronic, or surveillance-based methods (e.g., deleting logs, wiping drives, disabling cameras, spoofing, covert use of public or online info to locate/track/monitor a target undetected)
                 "04": evidence destruction or staging (e.g., arson, planting false evidence, altering weapon signatures)
                 "05": alibi creation, falsification, or witness manipulation (e.g., coercion, forging records, time-of-death manipulation)
                 "06": financial or identity concealment (e.g., shell companies, laundering techniques, stolen identities)
@@ -198,16 +204,21 @@ output:
             method_description:
               type: string
               description: >-
-                Generic, factual description of the concealment technique itself, from
-                the perpetrator's side (what is done, or should have been done, to
-                conceal, evade, or track without detection) — no character names or
-                pronouns, no restatement of concealment_category's definition, no plot
-                details or outcomes beyond the method.
+                Generic, factual description of the technique itself, perpetrator's-side, active voice, gerund phrase (what
+                is done, or should have been done, to conceal, evade, or track without detection) — no character names or
+                pronouns, no restatement of concealment_category's definition, no plot details or outcomes beyond the method.
+            confidence:
+              type: string
+              enum: ["high", "medium", "low"]
+              description: >-
+                Confidence this is a genuine finding rather than a false positive — high for explicit/executed techniques,
+                lower for hypotheticals or ambiguous framing.
           required:
             - excerpt_start_id
             - excerpt_end_id
             - concealment_category
             - method_description
+            - confidence
           additionalProperties: false
     required: [matched]
     additionalProperties: false
