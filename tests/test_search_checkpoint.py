@@ -8,21 +8,27 @@ from glyphwell.corpus.chunker import Chunk, iter_chunks
 from glyphwell.corpus.reader import Sentence
 from glyphwell.db.repositories import ResultsRepository, RunFilesRepository, RunsRepository
 from glyphwell.search.checkpoint import Checkpoint, commit_chunk, load_checkpoint, resume_position
+from glyphwell.tokens import estimate_tokens
 
 
 def _sentences(n: int) -> list[Sentence]:
-    return [Sentence(index=i, id=str(i), text=f"s{i}") for i in range(n)]
+    return [Sentence(index=i, id=f"{i:04d}", text="x") for i in range(n)]
+
+
+def _budget(size: int) -> int:
+    """Token budget reproducing a fixed `size`-sentence window, for `_sentences`'s uniform lines."""
+    return estimate_tokens("[0000] x") * size
 
 
 def test_resume_position_of_a_fresh_file_starts_at_zero() -> None:
-    assert resume_position(None, size=5, overlap=2) == (0, 0)
+    assert resume_position(None, overlap=2) == (0, 0)
 
 
 def test_resume_position_of_a_not_yet_started_checkpoint_starts_at_zero() -> None:
     checkpoint = Checkpoint(
         run_id=1, file_id=1, last_sentence_index=None, last_sentence_id=None, chunks_done=0
     )
-    assert resume_position(checkpoint, size=5, overlap=2) == (0, 0)
+    assert resume_position(checkpoint, overlap=2) == (0, 0)
 
 
 @pytest.mark.parametrize(
@@ -33,7 +39,8 @@ def test_resume_position_reproduces_the_next_chunk_of_a_fresh_pass(
     n: int, size: int, overlap: int
 ) -> None:
     """The direct cross-check between `iter_chunks`'s windowing and this arithmetic."""
-    fresh = list(iter_chunks(_sentences(n), size=size, overlap=overlap))
+    token_budget = _budget(size)
+    fresh = list(iter_chunks(_sentences(n), token_budget=token_budget, overlap=overlap))
     assert len(fresh) >= 2, "need at least two chunks for there to be a 'next' one"
 
     for committed_index in range(len(fresh) - 1):
@@ -45,12 +52,12 @@ def test_resume_position_reproduces_the_next_chunk_of_a_fresh_pass(
             last_sentence_id=committed.last.id,
             chunks_done=committed_index + 1,
         )
-        start_index, start_chunk_index = resume_position(checkpoint, size=size, overlap=overlap)
+        start_index, start_chunk_index = resume_position(checkpoint, overlap=overlap)
 
         resumed = next(
             iter_chunks(
                 _sentences(n)[start_index:],
-                size=size,
+                token_budget=token_budget,
                 overlap=overlap,
                 start_chunk_index=start_chunk_index,
             )

@@ -1,6 +1,9 @@
 # Manifest reduced to the strict minimum required, used by the tests.
 name: minimal
 model: test-model
+options:
+  num_ctx: 4096
+  num_predict: 256
 prompt:
   user: |
     {{ chunk }}

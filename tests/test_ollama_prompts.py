@@ -5,8 +5,9 @@ import pytest
 from glyphwell.corpus.chunker import Chunk
 from glyphwell.corpus.reader import Sentence
 from glyphwell.errors import ManifestError
+from glyphwell.manifest.model import PromptConfig
 from glyphwell.metadata.resolver import Title
-from glyphwell.ollama.prompts import PLACEHOLDERS, render, render_context
+from glyphwell.ollama.prompts import PLACEHOLDERS, render, render_context, render_overhead
 
 
 def _chunk() -> Chunk:
@@ -61,3 +62,15 @@ def test_render_rejects_an_unknown_placeholder() -> None:
     context = render_context(chunk=_chunk(), title=None, imdb_id="tt0133093")
     with pytest.raises(ManifestError):
         render("{{ nope }}", context)
+
+
+def test_render_overhead_renders_system_and_user_with_an_empty_chunk() -> None:
+    prompt = PromptConfig(system="Movie: {{ title }}", user="{{ chunk }}\nDone.")
+    overhead = render_overhead(prompt, title="The Matrix", year=1999, imdb_id="tt0133093")
+    assert overhead == "Movie: The Matrix\n\nDone."
+
+
+def test_render_overhead_without_a_system_prompt() -> None:
+    prompt = PromptConfig(user="{{ chunk }}")
+    overhead = render_overhead(prompt, title="tt0133093", year=None, imdb_id="tt0133093")
+    assert overhead == "\n"

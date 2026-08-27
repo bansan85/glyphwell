@@ -69,12 +69,11 @@ def load_checkpoint(
     )
 
 
-def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -> tuple[int, int]:
+def resume_position(checkpoint: Checkpoint | None, *, overlap: int) -> tuple[int, int]:
     """Computes where to resume reading a file.
 
     Args:
         checkpoint: current cursor, or `None` for a fresh file.
-        size: manifest chunk size.
         overlap: manifest overlap.
 
     Returns:
@@ -83,16 +82,12 @@ def resume_position(checkpoint: Checkpoint | None, *, size: int, overlap: int) -
         otherwise `chunk_index` would stop designating the same sentence range as on the
         first pass and the uniqueness constraint would lose its meaning.
 
-        With ``stride = size - overlap``, chunk `k` (0-based) covers stream positions
-        ``[k*stride, k*stride + size)``. The last committed chunk is
-        ``chunks_done - 1``, whose last covered index is `last_sentence_index`; solving
-        for the next chunk's start gives ``chunks_done*stride ==
-        last_sentence_index + 1 - overlap``, and ``chunks_done`` is directly the index to
-        give that next chunk. `size` cancels out of that formula algebraically — kept as
-        a parameter regardless, since it documents the relationship and mirrors
-        `iter_chunks`'s own signature.
+        The last committed chunk is ``chunks_done - 1``, whose last covered index is
+        `last_sentence_index`; the next chunk must start `overlap` sentences before that
+        (clamped to 0), and ``chunks_done`` is directly the index to give it. Chunk width
+        plays no part in this: `iter_chunks` derives it from the token budget, not from a
+        fixed stride, so only `overlap` matters here.
     """
-    _ = size
     if checkpoint is None or not checkpoint.started:
         return 0, 0
     assert checkpoint.last_sentence_index is not None  # `started` guarantees this

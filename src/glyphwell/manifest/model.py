@@ -55,9 +55,13 @@ class PrefilterMode(StrEnum):
 
 
 class ChunkConfig(_Base):
-    """Chunking: unit of model calls and unit of resuming."""
+    """Chunking: unit of model calls and unit of resuming.
 
-    size: int = Field(default=80, ge=1, description="Number of sentences per chunk.")
+    The number of sentences per chunk is no longer a manifest setting: it is computed at
+    search time from `options.num_ctx`/`options.num_predict` and each sentence's own
+    length (see `glyphwell.tokens.chunk_token_budget`), so the two can never drift apart.
+    """
+
     overlap: int = Field(
         default=10,
         ge=0,
@@ -65,14 +69,6 @@ class ChunkConfig(_Base):
             "Sentences repeated from one chunk to the next, so a passage is not cut in two."
         ),
     )
-
-    @model_validator(mode="after")
-    def _check_overlap(self) -> Self:
-        """An overlap greater than or equal to the size would prevent the chunk from advancing."""
-        if self.overlap >= self.size:
-            message = f"chunk.overlap ({self.overlap}) must be < chunk.size ({self.size})"
-            raise ValueError(message)
-        return self
 
 
 class PrefilterConfig(_Base):
@@ -192,7 +188,11 @@ class SearchManifest(_Base):
     )
     options: dict[str, JsonValue] = Field(
         default_factory=dict,
-        description="Options passed through as-is to Ollama (temperature, num_ctx...).",
+        description=(
+            "Options passed through as-is to Ollama (temperature, num_ctx...)."
+            " num_ctx and num_predict are required, positive integers: chunk sizing"
+            " (see ChunkConfig) is computed from them, so they can no longer be omitted."
+        ),
     )
 
     select: SelectConfig = SelectConfig()
@@ -216,3 +216,26 @@ class SearchManifest(_Base):
             message = "match_when requires output.format == 'json'"
             raise ValueError(message)
         return self
+
+    @model_validator(mode="after")
+    def _check_context_options(self) -> Self:
+        """Chunk sizing needs both, so they can no longer be silently absent."""
+        _positive_int_option(self.options, "num_ctx")
+        _positive_int_option(self.options, "num_predict")
+        return self
+
+    def ollama_context_options(self) -> tuple[int, int]:
+        """The manifest's ``(num_ctx, num_predict)``, already validated as positive ints."""
+        return (
+            _positive_int_option(self.options, "num_ctx"),
+            _positive_int_option(self.options, "num_predict"),
+        )
+
+
+def _positive_int_option(options: dict[str, JsonValue], key: str) -> int:
+    """Narrows `options[key]` to a positive `int`, `bool` excluded (an `int` subclass)."""
+    value = options.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        message = f"options.{key} must be a positive integer, got {value!r}"
+        raise ValueError(message)
+    return value

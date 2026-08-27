@@ -291,8 +291,14 @@ fully reconstructible.
 This is the core of the program's correctness. Any change to
 [search/](src/glyphwell/search/) must preserve these.
 
-1. **Grain = the chunk.** A subtitle is split into sliding chunks of `chunk.size`
-   sentences with `chunk.overlap` overlapping. One LLM call per chunk.
+1. **Grain = the chunk.** A subtitle is split into sliding chunks with `chunk.overlap`
+   sentences repeated between one and the next. One LLM call per chunk. A chunk's own
+   sentence count is not a manifest setting: [corpus/chunker.py](src/glyphwell/corpus/chunker.py)'s
+   `iter_chunks` fills each chunk up to a token budget derived from `options.num_ctx`,
+   `options.num_predict`, and the rendered prompt overhead (see
+   [glyphwell/tokens.py](src/glyphwell/tokens.py) and ADR-0021) — it stays deterministic
+   per manifest for the same reason a fixed count used to: both options are part of the
+   manifest, hence of `runs.manifest_hash` (point 6 below).
 2. **`run_files.last_sentence_id` is the resume point.** This is the position, within the
    stream of sentences in the file, of the last sentence actually covered by a window
    whose result has been committed. `last_sentence_id` stores the corresponding `<s id>`

@@ -155,14 +155,27 @@ below sit under `Unreleased`.
   `lxml.etree.iterparse(..., recover=True)`, freeing each `<s>` element once visited so
   memory does not grow with the file. `corpus/hashing.py` gained `sha256_stream` for the
   same reason: an archive member has no path on disk to hash from.
-- `corpus/chunker.py`: `iter_chunks`/`chunk_count` implement the fixed-stride sliding
-  window decided by ADR-0005.
+- `corpus/chunker.py`: `iter_chunks` implements the sliding window decided by ADR-0005,
+  each chunk filled to a **token budget** rather than a fixed sentence count (ADR-0021):
+  `glyphwell/tokens.py`'s new `estimate_tokens`/`chunk_token_budget` derive that budget
+  from `options.num_ctx`, `options.num_predict`, and the rendered prompt overhead, so
+  `chunk.size` is removed from the manifest and the two settings can no longer drift
+  apart. The budget is capped at `num_predict` tokens, not just whatever fits in
+  `num_ctx`: an early version filled the whole context window and produced chunks large
+  enough that the model's JSON response (an array of findings, one per interesting line)
+  overran `num_predict` and got cut off mid-string — capping the input to the response
+  budget keeps the two in proportion instead. `options.num_ctx`/`options.num_predict` are
+  now required, positive-integer manifest fields
+  (`SearchManifest._check_context_options`) — chunk sizing depends on both, so neither
+  can be silently absent.
 - `manifest/prefilter.py`: `Prefilter` compiles a manifest's patterns once per search
   (literal patterns `re.escape`-d, folding literal and regex matching into one code path)
   and evaluates `any`/`all`/`none`/`off` against a chunk's rendered text.
 - `ollama/prompts.py`: `render`/`render_context` substitute a chunk's `{{ title / year /
   imdb_id / first_id / last_id / chunk }}` placeholders, raising `ManifestError` on an
-  unknown one rather than sending a truncated prompt to thousands of chunks.
+  unknown one rather than sending a truncated prompt to thousands of chunks. The new
+  `render_overhead` renders `prompt.system`/`prompt.user` with an empty chunk, for the
+  token-budget estimate above.
 - `ollama/client.py`: `OllamaClient`, backed by the `ollama` package, implements
   `LlmClient.complete` (schema-constrained generation, decoded and re-checked
   client-side — ADR-0013) and `ensure_model` (fails a run before it starts scanning the
@@ -384,12 +397,13 @@ are now implemented; see *Known limitations* for the handful that still raise
 | `glyphwell.console` | `console` |
 | `glyphwell.logging` | `get_logger`, `setup_logging` |
 | `glyphwell.cli` | `AppContext`, `app`, `get_context`, `main` |
-| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `chunk_count`, `count_sentences`, `imdb_id_from_int`, `imdb_id_to_int`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file`, `sha256_stream` |
+| `glyphwell.tokens` | `CHARS_PER_TOKEN`, `SAFETY_MARGIN_RATIO`, `chunk_token_budget`, `estimate_tokens` |
+| `glyphwell.corpus` | `ArchiveMember`, `ArchiveSummary`, `Chunk`, `CorpusArchive`, `CorpusEntry`, `Sentence`, `count_sentences`, `imdb_id_from_int`, `imdb_id_to_int`, `iter_chunks`, `iter_corpus`, `iter_sentences`, `normalize_imdb_id`, `parse_entry`, `sha256_file`, `sha256_stream` |
 | `glyphwell.corpus.archive` | `ArchiveMember`, `ArchiveSummary`, `CorpusArchive` |
 | `glyphwell.corpus.opus` | `DEFAULT_CORPUS`, `DEFAULT_PREPROCESSING`, `DEFAULT_TIMEOUT`, `DEFAULT_VERSION`, `CorpusDownload`, `OpusFileRecord`, `Preprocessing`, `ProgressCallback`, `download_corpus`, `iter_available_versions`, `resolve_archive` |
 | `glyphwell.corpus.layout` | `IMDB_ID_WIDTH`, `SUBTITLE_SUFFIXES`, `CorpusEntry`, `imdb_id_from_int`, `imdb_id_to_int`, `iter_corpus`, `normalize_imdb_id`, `parse_entry` |
 | `glyphwell.corpus.reader` | `Sentence`, `count_sentences`, `iter_sentences` |
-| `glyphwell.corpus.chunker` | `Chunk`, `chunk_count`, `iter_chunks` |
+| `glyphwell.corpus.chunker` | `Chunk`, `iter_chunks` |
 | `glyphwell.corpus.hashing` | `DEFAULT_CHUNK_SIZE`, `sha256_file`, `sha256_stream` |
 | `glyphwell.db` | `CATALOG_SCHEMA_VERSION`, `RUN_SCHEMA_VERSION`, `catalog_schema_sql`, `connect`, `current_version`, `ensure_catalog_current`, `ensure_run_current`, `initialize_catalog`, `initialize_run`, `open_connection`, `run_schema_sql` |
 | `glyphwell.db.repositories` | `CorpusDownloadRow`, `CorpusDownloadsRepository`, `DownloadStatus`, `EpisodeLink`, `FileStatus`, `ImportRow`, `ImportSource`, `ImportsRepository`, `RunStatus`, `ResultRow`, `ResultsRepository`, `RunFileRow`, `RunFilesRepository`, `RunRow`, `RunsRepository`, `SubtitleFileRow`, `SubtitleFilesRepository`, `TitleRow`, `TitlesRepository` |
@@ -397,8 +411,8 @@ are now implemented; see *Known limitations* for the handful that still raise
 | `glyphwell.manifest.model` | `ChunkConfig`, `OutputConfig`, `OutputFormat`, `PrefilterConfig`, `PrefilterMode`, `PromptConfig`, `SearchManifest`, `SelectConfig`, `YearRange` |
 | `glyphwell.metadata` | `ImdbDataset`, `SqliteTitleProvider`, `Title`, `TitleProvider` |
 | `glyphwell.metadata.imdb_datasets` | `BASE_URL`, `NULL_MARKER`, `ImdbDataset`, `ProgressCallback`, `download`, `import_basics`, `import_episodes`, `iter_rows`, `locate_dataset` |
-| `glyphwell.ollama` | `Completion`, `LlmClient`, `OllamaClient`, `PromptContext`, `render`, `render_context` |
-| `glyphwell.ollama.prompts` | `PLACEHOLDERS`, `PromptContext`, `render`, `render_context` |
+| `glyphwell.ollama` | `Completion`, `LlmClient`, `OllamaClient`, `PromptContext`, `render`, `render_context`, `render_overhead` |
+| `glyphwell.ollama.prompts` | `PLACEHOLDERS`, `PromptContext`, `render`, `render_context`, `render_overhead` |
 | `glyphwell.search` | `Candidate`, `Checkpoint`, `ExportFormat`, `PlannedFile`, `SearchEngine`, `SearchOutcome`, `ValidatedOutput`, `commit_chunk`, `enqueue`, `export_run`, `iter_work`, `load_checkpoint`, `select_representative`, `validate_output` |
 | `glyphwell.search.checkpoint` | `Checkpoint`, `commit_chunk`, `load_checkpoint`, `resume_position` |
 | `glyphwell.search.dedup` | `Candidate`, `select_representative` |

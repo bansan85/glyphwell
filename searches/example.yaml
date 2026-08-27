@@ -21,13 +21,18 @@ model: fredrezones55/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b
 
 # Options passed through as-is to Ollama.
 # temperature 0: reproducible results are wanted from one run to the next.
-# num_ctx must stay larger than the chunk size, otherwise the model truncates the context.
-# num_predict bounds the response length: the expected JSON object is small, so this caps
-# worst-case latency per call and guards against runaway generation.
+# num_ctx and num_predict are required: the number of sentences per chunk (see `chunk`
+# below) is derived from them, together with each sentence's own length, instead of being
+# set by hand — so the two can no longer drift out of sync.
+# num_predict also bounds the response length AND, indirectly, the chunk itself: a chunk
+# is never sized past num_predict tokens, since a bigger one risks the model having more
+# findings to report than num_predict leaves room for — an incomplete, invalid JSON
+# response rather than a graceful cutoff. Raise num_predict for denser chunks, not just
+# for a longer response budget.
 options:
   temperature: 0
   num_ctx: 24576
-  num_predict: 2000
+  num_predict: 1024
 
 # --------------------------------------------------------------------------------------
 # Which subtitles to analyze
@@ -53,14 +58,15 @@ select:
 # --------------------------------------------------------------------------------------
 # Chunking — unit of model calls AND unit of resuming
 # --------------------------------------------------------------------------------------
-# A subtitle is split into chunks of `size` sentences, with `overlap` sentences repeated
-# from one chunk to the next so an exchange is not cut in two.
+# A subtitle is split into chunks sized automatically from `options.num_ctx` and
+# `options.num_predict` — see doc/search.md. `overlap` sentences are repeated from one
+# chunk to the next so an exchange is not cut in two.
 #
-# Larger `size` = fewer calls, more context, but a coarser resume grain: an interruption
-# loses at most one chunk of work.
-# `overlap` must stay strictly smaller than `size`.
+# A larger `num_predict` (within what `num_ctx` can hold) therefore means fewer calls,
+# more context per call, but a coarser resume grain: an interruption loses at most one
+# chunk of work. Keep `overlap` modest relative to how many sentences typically fit in the
+# budget — a large overlap on a tightly-filled chunk repeats most of it into the next one.
 chunk:
-  size: 150
   overlap: 12
 
 # --------------------------------------------------------------------------------------

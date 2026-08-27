@@ -28,11 +28,12 @@ from glyphwell.errors import SearchError
 from glyphwell.manifest import load
 from glyphwell.metadata.resolver import SqliteTitleProvider
 from glyphwell.ollama.client import OllamaClient
-from glyphwell.ollama.prompts import render, render_context
+from glyphwell.ollama.prompts import render, render_context, render_overhead
 from glyphwell.search import planner
 from glyphwell.search.dedup import Candidate, select_representative
 from glyphwell.search.engine import SearchEngine, SearchOutcome
 from glyphwell.search.results import ExportFormat
+from glyphwell.tokens import chunk_token_budget
 
 if TYPE_CHECKING:
     import sqlite3
@@ -233,10 +234,20 @@ def _run_dry(settings: "Settings", loaded: "LoadedManifest") -> None:
                 message = "no file in the corpus matches this manifest's select filters"
                 raise SearchError(message)
             entry, title = found
+            num_ctx, num_predict = manifest.ollama_context_options()
+            overhead_text = render_overhead(
+                manifest.prompt,
+                title=title.display_name() if title is not None else entry.imdb_id,
+                year=title.start_year if title is not None else None,
+                imdb_id=entry.imdb_id,
+            )
+            token_budget = chunk_token_budget(
+                num_ctx=num_ctx, num_predict=num_predict, overhead_text=overhead_text
+            )
             with archive.open_member(entry.rel_path) as stream:
                 sentences = iter_sentences(stream)
                 chunks = iter_chunks(
-                    sentences, size=manifest.chunk.size, overlap=manifest.chunk.overlap
+                    sentences, token_budget=token_budget, overlap=manifest.chunk.overlap
                 )
                 chunk = next(chunks, None)
 
@@ -256,6 +267,7 @@ def _run_dry(settings: "Settings", loaded: "LoadedManifest") -> None:
         title=title,
         system_text=system_text,
         user_text=user_text,
+        token_budget=token_budget,
     )
 
 
@@ -362,6 +374,7 @@ def _print_dry_run(
     title: "Title | None",
     system_text: str | None,
     user_text: str,
+    token_budget: int,
 ) -> None:
     """Displays the manifest's parameters, then the fully rendered prompt."""
     manifest = loaded.manifest
@@ -373,6 +386,7 @@ def _print_dry_run(
     table.add_row("Title", title.display_name() if title is not None else entry.imdb_id)
     table.add_row("Model", manifest.model)
     table.add_row("Options", json.dumps(manifest.options) if manifest.options else "{}")
+    table.add_row("Chunk token budget", f"{token_budget:,} (estimated)")
     table.add_row("Output format", manifest.output.format)
     table.add_row("Output schema", "yes" if manifest.output.json_schema is not None else "no")
     table.add_row("Ollama host", settings.ollama_host)

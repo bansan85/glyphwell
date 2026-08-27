@@ -95,12 +95,18 @@ class _FailingLlmClient(_FakeLlmClient):
 
 
 def _write_manifest(tmp_path: Path, *, name: str = "t") -> Path:
+    """`num_ctx: 100`/`num_predict: 8` are picked so the resulting token budget (8 — the
+    num_predict cap binds here, well below the ~76-token context ceiling) fits exactly
+    two of `_build_archive`'s sentences per chunk — the token-budget equivalent of the
+    fixed `chunk.size: 2` this manifest used before chunk sizing became automatic."""
     path = tmp_path / "manifest.yaml"
     path.write_text(
         f"name: {name}\n"
         "model: test-model\n"
+        "options:\n"
+        "  num_ctx: 100\n"
+        "  num_predict: 8\n"
         "chunk:\n"
-        "  size: 2\n"
         "  overlap: 0\n"
         "prompt:\n"
         "  user: |\n"

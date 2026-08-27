@@ -19,7 +19,6 @@ def test_loads_minimal_manifest(minimal_manifest: Path) -> None:
 def test_loads_example_manifest(example_manifest: Path) -> None:
     """The shipped template must stay valid: it is the executable documentation of the format."""
     loaded = load(example_manifest)
-    assert loaded.manifest.chunk.size == 150
     assert loaded.manifest.chunk.overlap == 12
     assert loaded.manifest.prefilter.mode is PrefilterMode.OFF
     assert loaded.manifest.output.json_schema is not None
@@ -51,14 +50,41 @@ def test_unknown_key_is_rejected(tmp_path: Path) -> None:
         load(path)
 
 
-def test_overlap_must_be_smaller_than_size(tmp_path: Path) -> None:
-    """An overlap that is too large would prevent the chunk from advancing: infinite loop."""
-    path = tmp_path / "bad-chunk.yaml"
+def test_missing_num_ctx_is_rejected(tmp_path: Path) -> None:
+    """Chunk sizing is derived from num_ctx/num_predict: neither can be silently absent."""
+    path = tmp_path / "no-num-ctx.yaml"
     path.write_text(
-        "name: a\nmodel: m\nprompt:\n  user: x\nchunk:\n  size: 10\n  overlap: 10\n",
+        "name: a\nmodel: m\noptions:\n  num_predict: 256\nprompt:\n  user: x\n",
         encoding="utf-8",
     )
-    with pytest.raises(ManifestError, match="overlap"):
+    with pytest.raises(ManifestError, match="num_ctx"):
+        load(path)
+
+
+def test_missing_num_predict_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "no-num-predict.yaml"
+    path.write_text(
+        "name: a\nmodel: m\noptions:\n  num_ctx: 4096\nprompt:\n  user: x\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="num_predict"):
+        load(path)
+
+
+@pytest.mark.parametrize(
+    "yaml_value",
+    ['"1024"', "1.5", "true", "0", "-1"],
+    ids=["string", "float", "bool", "zero", "negative"],
+)
+def test_invalid_num_ctx_is_rejected(tmp_path: Path, yaml_value: str) -> None:
+    """A non-int (string, float, bool) or a non-positive int must fail validation."""
+    path = tmp_path / "bad-num-ctx.yaml"
+    path.write_text(
+        f"name: a\nmodel: m\noptions:\n  num_ctx: {yaml_value}\n  num_predict: 256\n"
+        "prompt:\n  user: x\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="num_ctx"):
         load(path)
 
 

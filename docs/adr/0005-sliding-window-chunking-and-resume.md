@@ -90,12 +90,17 @@ must be reproducible.
 
 ### Risks
 
-- Changing `chunk.size` or `chunk.overlap` re-partitions the file, invalidating the meaning
-  of stored `chunk_index` values. This is contained by ADR-0004: both fields are part of the
-  manifest, so changing either changes the manifest hash and starts a new run.
+- Changing what determines a window's width re-partitions the file, invalidating the
+  meaning of stored `chunk_index` values. This is contained by ADR-0004: whatever decides
+  the width is part of the manifest, so changing it changes the manifest hash and starts a
+  new run. (ADR-0021 replaces `chunk.size`, a fixed sentence count, with a width derived
+  from `options.num_ctx`/`options.num_predict` — still manifest fields, so this
+  containment still holds.)
 
 ## Related
 
 - `search/checkpoint.py`, `search/planner.py`, `search/engine.py`, `corpus/chunker.py`,
   and the `run_files` and `results` tables in `db/schema.sql`.
-- ADR-0004 (manifest hash), ADR-0006 (invalidating a single file).
+- ADR-0004 (manifest hash), ADR-0006 (invalidating a single file), ADR-0021 (chunk width:
+  token budget instead of a fixed `chunk.size`; the sliding-window/overlap/resume design
+  in this ADR is otherwise unchanged).

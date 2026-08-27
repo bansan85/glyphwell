@@ -16,11 +16,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from glyphwell.corpus.chunker import Chunk
+    from glyphwell.manifest.model import PromptConfig
     from glyphwell.metadata.resolver import Title
 
 _PLACEHOLDER_RE: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
-__all__ = ["PLACEHOLDERS", "PromptContext", "render", "render_context"]
+__all__ = ["PLACEHOLDERS", "PromptContext", "render", "render_context", "render_overhead"]
 
 PLACEHOLDERS: Final = (
     "title",
@@ -74,6 +75,22 @@ def render_context(*, chunk: "Chunk", title: "Title | None", imdb_id: ImdbId) ->
         last_id=chunk.last.id,
         chunk=chunk.render(with_ids=True),
     )
+
+
+def render_overhead(
+    prompt: "PromptConfig", *, title: str, year: int | None, imdb_id: ImdbId
+) -> str:
+    """Renders `prompt.system` and `prompt.user` with an empty chunk.
+
+    Used to estimate, before any chunk exists, how many tokens of the context window the
+    prompt template itself consumes — see `glyphwell.tokens.chunk_token_budget`.
+    """
+    context = PromptContext(
+        title=title, year=year, imdb_id=imdb_id, first_id="", last_id="", chunk=""
+    )
+    system_text = "" if prompt.system is None else render(prompt.system, context)
+    user_text = render(prompt.user, context)
+    return system_text + "\n" + user_text
 
 
 def render(template: str, context: PromptContext) -> str:

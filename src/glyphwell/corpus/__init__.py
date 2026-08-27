@@ -1,7 +1,7 @@
 """Acquisition, traversal, and chunking of the subtitle corpus."""
 
 from glyphwell.corpus.archive import ArchiveMember, ArchiveSummary, CorpusArchive
-from glyphwell.corpus.chunker import Chunk, chunk_count, iter_chunks
+from glyphwell.corpus.chunker import Chunk, iter_chunks
 from glyphwell.corpus.hashing import sha256_file, sha256_stream
 from glyphwell.corpus.layout import (
     CorpusEntry,
@@ -20,7 +20,6 @@ __all__ = [
     "CorpusArchive",
     "CorpusEntry",
     "Sentence",
-    "chunk_count",
     "count_sentences",
     "imdb_id_from_int",
     "imdb_id_to_int",

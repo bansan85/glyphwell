@@ -25,6 +25,7 @@ $ uv run glyphwell search run searches/example.yaml --dry-run
  Title           Le clown et ses chiens (1892)
  Model           huihui_ai/qwen3-abliterated:14b
  Options         {"temperature": 0, "num_ctx": 12288, "num_predict": 300}
+ Chunk token budget 300 (estimated)
  Output format   json
  Output schema   yes
  Ollama host     http://localhost:11434
@@ -93,7 +94,7 @@ top-level sections:
 |---|---|
 | `model`, `options` | Ollama model tag and generation options (`temperature`, `num_ctx`, `num_predict`, ...), passed through as-is. |
 | `select` | Which subtitles to analyze: language, IMDb title type, year range, an explicit id list (a series id expands to all of its episodes), and whether to keep every translation of a title or only its most complete one (`one_subtitle_per_title`, on by default — see *Deduplicating translations* below). Requires the IMDb datasets to be imported for anything beyond language. |
-| `chunk` | `size`/`overlap`, in sentences — the unit of both a model call and the resume cursor. |
+| `chunk` | `overlap`, in sentences repeated between one model call and the next — the unit of both a model call and the resume cursor. How many sentences fit in a chunk is not set here: it is derived automatically from `options.num_ctx`/`options.num_predict` and each sentence's own length (see *Chunking and resume* below). |
 | `prefilter` | A local substring/regex check (`any`/`all`/`none`/`off`) that skips a chunk without calling the model at all. |
 | `prompt` | `system`/`user` templates, with `{{ title }}`, `{{ year }}`, `{{ imdb_id }}`, `{{ first_id }}`, `{{ last_id }}`, `{{ chunk }}` placeholders. |
 | `output` | `format` (`json`/`text`) and, for JSON, the `schema` requested from Ollama and re-checked against the response. |
@@ -161,13 +162,45 @@ would have kept is a silent false negative, not a faster search.
 
 ## Chunking and resume
 
-Sentences stream past a fixed-stride sliding window (`chunk.size`, `chunk.overlap`); one
-model call per window, one SQLite transaction per call, writing the result and the resume
-cursor together (ADR-0005). Interrupting a run — `Ctrl-C`, a crash, a restart — never
-costs more than the one chunk in flight when it happened; rerunning the same manifest
-picks the queue back up exactly where it left off. A subtitle file that newly appears in
-the corpus (a new `opensubtitles_file_id`) reaches an already-running search the same
-way: rerun `corpus index`, then the manifest (ADR-0015).
+Sentences stream past a sliding window sized to a **token budget**, not a fixed sentence
+count (ADR-0021, amending ADR-0005): each chunk is filled with as many sentences as fit
+under
+
+```
+ceiling      = num_ctx - num_predict - estimate_tokens(prompt overhead) - 15% of num_ctx
+token_budget = min(ceiling, num_predict)
+```
+
+where "prompt overhead" is `prompt.system` and `prompt.user` rendered with an empty
+chunk, and `estimate_tokens` is a conservative characters-per-token heuristic (no
+tokenizer is available offline for an arbitrary Ollama model). The 15% margin absorbs
+chat-template special tokens, the JSON-schema `format` payload's own context cost, and
+the estimator's error — raise `options.num_ctx` (or shorten the prompt) if a manifest's
+own overhead leaves no room for a chunk at all (`ManifestError` at the first file).
+
+The `min(ceiling, num_predict)` cap matters more than it looks: filling as much of
+`num_ctx` as physically fits sounds efficient, but for a prompt whose response scales
+with its input — an array of findings, one per interesting line, say — a huge chunk just
+moves the truncation from the request to the response. Ollama stops generating exactly at
+`num_predict`, mid-JSON, once the model has more to describe than the response budget
+allows, and that failure surfaces as `model response is not valid JSON`, not as a clear
+error about `num_ctx`. Capping the chunk to `num_predict` keeps the two roughly in
+proportion — in the same ballpark as how a hand-picked `chunk.size` used to be tuned
+alongside `num_predict` before chunk sizing became automatic. A manifest whose response
+schema does not scale with input (a lone boolean, say) can still get denser chunks by
+raising `num_predict` beyond what a single response actually needs.
+
+Since `num_ctx`/`num_predict` are manifest fields, this stays as deterministic per
+manifest as a fixed sentence count used to be — see
+[glyphwell/tokens.py](../src/glyphwell/tokens.py).
+
+`chunk.overlap` sentences are repeated between one chunk and the next so an exchange
+straddling the boundary is not analyzed only once. One model call per chunk, one SQLite
+transaction per call, writing the result and the resume cursor together. Interrupting a
+run — `Ctrl-C`, a crash, a restart — never costs more than the one chunk in flight when it
+happened; rerunning the same manifest picks the queue back up exactly where it left off. A
+subtitle file that newly appears in the corpus (a new `opensubtitles_file_id`) reaches an
+already-running search the same way: rerun `corpus index`, then the manifest (ADR-0015).
 
 ## Concurrency
 

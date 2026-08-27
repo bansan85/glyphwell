@@ -43,10 +43,11 @@ from glyphwell.logging import get_logger
 from glyphwell.manifest.model import SearchManifest
 from glyphwell.manifest.prefilter import Prefilter
 from glyphwell.metadata.resolver import SqliteTitleProvider
-from glyphwell.ollama.prompts import render, render_context
+from glyphwell.ollama.prompts import render, render_context, render_overhead
 from glyphwell.search import planner
 from glyphwell.search.checkpoint import commit_chunk, load_checkpoint, resume_position
 from glyphwell.search.results import validate_output
+from glyphwell.tokens import chunk_token_budget
 from glyphwell.types import ImdbId
 
 if TYPE_CHECKING:
@@ -545,9 +546,7 @@ def _open_file(
         return None
 
     checkpoint = load_checkpoint(run_conn, run_id=run_id, file_id=file_id)
-    start_index, start_chunk_index = resume_position(
-        checkpoint, size=manifest.chunk.size, overlap=manifest.chunk.overlap
-    )
+    start_index, start_chunk_index = resume_position(checkpoint, overlap=manifest.chunk.overlap)
 
     try:
         stream = archive.open_member(file_row.rel_path)
@@ -556,14 +555,25 @@ def _open_file(
         _log.warning("could not open %s: %s", file_row.rel_path, exc)
         return None
 
+    title = titles.resolve(file_row.imdb_id)
+    num_ctx, num_predict = manifest.ollama_context_options()
+    overhead_text = render_overhead(
+        manifest.prompt,
+        title=title.display_name() if title is not None else file_row.imdb_id,
+        year=title.start_year if title is not None else None,
+        imdb_id=file_row.imdb_id,
+    )
+    token_budget = chunk_token_budget(
+        num_ctx=num_ctx, num_predict=num_predict, overhead_text=overhead_text
+    )
+
     sentences = iter_sentences(stream, start_index=start_index)
     chunks = iter_chunks(
         sentences,
-        size=manifest.chunk.size,
+        token_budget=token_budget,
         overlap=manifest.chunk.overlap,
         start_chunk_index=start_chunk_index,
     )
-    title = titles.resolve(file_row.imdb_id)
     _log.debug(
         "opening %s (file %d): resuming at sentence %d, chunk %d",
         file_row.rel_path,
