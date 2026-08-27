@@ -149,6 +149,6 @@ def commit_chunk(
         run_conn.execute("COMMIT")
     except sqlite3.Error as exc:
         run_conn.execute("ROLLBACK")
-        message = f"failed to commit chunk {chunk.index} of file {file_id} (run {run_id}): {exc}"
+        message = f"failed to commit chunk {chunk.index + 1} of file {file_id} (run {run_id}): {exc}"
         raise DatabaseError(message) from exc
     return inserted

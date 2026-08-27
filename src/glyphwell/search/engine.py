@@ -244,12 +244,12 @@ class SearchEngine:
                     _log.warning(
                         "chunk %d/%d of file %d (%s, sentences %d-%d) failed,"
                         " file marked error: %s",
-                        chunk.index,
+                        chunk.index + 1,
                         state.total_chunks,
                         file_id,
                         state.rel_path,
-                        chunk.first.index,
-                        chunk.last.index,
+                        chunk.first.index + 1,
+                        chunk.last.index + 1,
                         exc,
                     )
                     return counters.chunks_done + counters.chunks_skipped
@@ -422,12 +422,12 @@ class SearchEngine:
                             _log.warning(
                                 "chunk %d/%d of file %d (%s, sentences %d-%d) failed,"
                                 " file marked error: %s",
-                                chunk.index,
+                                chunk.index + 1,
                                 state.total_chunks,
                                 file_id,
                                 state.rel_path,
-                                chunk.first.index,
-                                chunk.last.index,
+                                chunk.first.index + 1,
+                                chunk.last.index + 1,
                                 exc,
                             )
                             state.stream.close()
@@ -641,8 +641,8 @@ def _open_file(
         "opening %s (file %d): resuming at sentence %d, chunk %d/%d",
         file_row.rel_path,
         file_id,
-        start_index,
-        start_chunk_index,
+        start_index + 1,
+        start_chunk_index + 1,
         total_chunks,
     )
     return _FileState(
@@ -687,11 +687,11 @@ def _next_evaluable_chunk(
             counters.chunks_skipped += 1
             _log.debug(
                 "chunk %d/%d of file %d (sentences %d-%d): skipped by the pre-filter",
-                chunk.index,
+                chunk.index + 1,
                 state.total_chunks,
                 file_id,
-                chunk.first.index,
-                chunk.last.index,
+                chunk.first.index + 1,
+                chunk.last.index + 1,
             )
             continue
         return chunk
@@ -721,11 +721,11 @@ def _complete_chunk(
     """
     _log.debug(
         "chunk %d/%d of file %d: sentences %d-%d",
-        chunk.index,
+        chunk.index + 1,
         state.total_chunks,
         state.file_id,
-        chunk.first.index,
-        chunk.last.index,
+        chunk.first.index + 1,
+        chunk.last.index + 1,
     )
     context = render_context(chunk=chunk, title=state.title, imdb_id=state.imdb_id)
     system = None if manifest.prompt.system is None else render(manifest.prompt.system, context)
@@ -894,22 +894,22 @@ def _commit_completion(
         if validated.payload is None:
             _log.debug(
                 "chunk %d/%d of file %d (sentences %d-%d): matched (%dms, %s)",
-                chunk.index,
+                chunk.index + 1,
                 total_chunks,
                 file_id,
-                chunk.first.index,
-                chunk.last.index,
+                chunk.first.index + 1,
+                chunk.last.index + 1,
                 completion.latency_ms,
                 _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
             )
         else:
             _log.debug(
                 "chunk %d/%d of file %d (sentences %d-%d): matched (%dms, %s):\n%s",
-                chunk.index,
+                chunk.index + 1,
                 total_chunks,
                 file_id,
-                chunk.first.index,
-                chunk.last.index,
+                chunk.first.index + 1,
+                chunk.last.index + 1,
                 completion.latency_ms,
                 _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
                 _format_match(validated.payload, output=manifest.output),
@@ -917,11 +917,11 @@ def _commit_completion(
     else:
         _log.debug(
             "chunk %d/%d of file %d (sentences %d-%d): no match (%dms, %s)",
-            chunk.index,
+            chunk.index + 1,
             total_chunks,
             file_id,
-            chunk.first.index,
-            chunk.last.index,
+            chunk.first.index + 1,
+            chunk.last.index + 1,
             completion.latency_ms,
             _token_summary(completion, num_ctx=num_ctx, num_predict=num_predict),
         )
