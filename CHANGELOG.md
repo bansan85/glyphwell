@@ -186,8 +186,17 @@ below sit under `Unreleased`.
 - `search run` now reports progress instead of going silent between the initial
   `database opened` line and the final summary table: run creation/resume and queue size
   at `INFO`, one line per file completed at `INFO`, and one line per chunk (submitted,
-  pre-filtered, or committed with its match/latency) at `DEBUG`. `ollama/client.py` logs
-  each call's latency at `DEBUG` and now logs a retry attempt at `WARNING` instead of
+  pre-filtered, or committed with its match/latency) at `DEBUG`. A matched chunk's
+  `DEBUG` line renders each finding as a readable block instead of dumping the raw
+  payload `dict`: the reconstructed excerpt is quoted line by line under its own
+  heading (so it reads unmistakably as the subtitle transcript, not the model's prose),
+  followed by the finding's remaining fields, one per line. A field whose value is a
+  code documented in `output.json_schema` via the new `x-enum-descriptions` keyword
+  (see `searches/example.yaml`'s `concealment_category`) gets that description appended
+  after it — the keyword isn't part of JSON Schema validation, so it costs nothing on
+  the Ollama generation or `jsonschema` validation side. Falls back to the raw payload
+  for an `output.schema` that doesn't nest an `excerpt`. `ollama/client.py` logs each
+  call's latency at `DEBUG` and now logs a retry attempt at `WARNING` instead of
   sleeping through the backoff with no visible cause.
 - `search/results.py`: `validate_output` re-checks a response against the manifest's
   schema and resolves `match_when`, independently of the `format` constraint already

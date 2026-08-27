@@ -145,6 +145,17 @@ output:
               type: string
               enum: ["01", "02", "03", "04", "05", "06", "07"]
               description: The category of concealment or evasion technique identified.
+              # Not a JSON Schema validation keyword — jsonschema.validate() and Ollama's
+              # structured generation both ignore it. Read only by search/engine.py's
+              # debug log, to show the category's meaning next to its code.
+              x-enum-descriptions:
+                "01": body disposal, destruction, or alteration (e.g., chemical dissolution, dismemberment, burial, cremation)
+                "02": chemical or physical forensic cleanup (e.g., bleaching, washing, removing biological evidence, staging scenes)
+                "03": digital, electronic, or surveillance tampering (e.g., deleting logs, wiping drives, disabling cameras, spoofing)
+                "04": evidence destruction or staging (e.g., arson, planting false evidence, altering weapon signatures)
+                "05": alibi creation, falsification, or witness manipulation (e.g., coercion, forging records, time-of-death manipulation)
+                "06": financial or identity concealment (e.g., shell companies, laundering techniques, stolen identities)
+                "07": other forensic evasion or obstruction methods not elsewhere classified
             method_description:
               type: string
               description: Concise summary in English of the specific concealment technique used or described.

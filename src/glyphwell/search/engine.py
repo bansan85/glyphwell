@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from glyphwell.manifest.model import OutputConfig
     from glyphwell.metadata.resolver import Title
     from glyphwell.ollama.client import Completion, LlmClient
-    from glyphwell.types import JsonValue
+    from glyphwell.types import JsonObject, JsonValue
 
 __all__ = ["SearchEngine", "SearchOutcome"]
 
@@ -619,6 +619,69 @@ def _complete_chunk(
     )
 
 
+def _enum_descriptions(node: "JsonValue") -> dict[str, str]:
+    """Flattens every ``x-enum-descriptions`` map found anywhere in a JSON schema into
+    one ``code -> human-readable text`` mapping.
+
+    ``x-enum-descriptions`` is not a JSON Schema validation keyword: neither
+    `jsonschema.validate` nor the constraint sent to Ollama's structured generation
+    looks at it, so a manifest can attach prose to an otherwise opaque ``enum`` value
+    (see `searches/example.yaml`'s `concealment_category`) purely for this log's
+    benefit, at no cost on the generation or validation side.
+    """
+    found: dict[str, str] = {}
+    if isinstance(node, dict):
+        descriptions = node.get("x-enum-descriptions")
+        if isinstance(descriptions, dict):
+            for code, text in descriptions.items():
+                if isinstance(text, str):
+                    found[code] = text
+        for child in node.values():
+            found.update(_enum_descriptions(child))
+    elif isinstance(node, list):
+        for child in node:
+            found.update(_enum_descriptions(child))
+    return found
+
+
+def _format_match(payload: "JsonObject", *, output: "OutputConfig") -> str:
+    """Renders a matched chunk's payload for the debug log, one block per finding.
+
+    Walks every list field of `payload` for dict items carrying a reconstructed
+    ``excerpt`` (see `search/results.py`'s `_reconstruct_excerpts`): each subtitle line
+    of the excerpt is quoted on its own row, under an explicit heading, so it reads
+    unmistakably as a transcript rather than the model's own prose — flattening it to a
+    single line previously made the two indistinguishable. Every other field follows,
+    one per line; wherever a field's value is a code documented in `output.json_schema`
+    via `_enum_descriptions`, its description is appended after it. Falls back to the
+    raw payload for a schema that doesn't follow the ``excerpt_ids``/``excerpt``
+    convention, so a match is never logged as an empty block.
+    """
+    descriptions = _enum_descriptions(output.json_schema) if output.json_schema is not None else {}
+    blocks: list[str] = []
+    for value in payload.values():
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            excerpt = item.get("excerpt")
+            if not isinstance(excerpt, str):
+                continue
+            lines = ["    Excerpt:"]
+            lines += [f"      | {sentence}" for sentence in excerpt.splitlines()]
+            for key in item:
+                if key in ("excerpt", "excerpt_ids"):
+                    continue
+                field_value = item[key]
+                if isinstance(field_value, str) and field_value in descriptions:
+                    lines.append(f"    {key}: {field_value} — {descriptions[field_value]}")
+                else:
+                    lines.append(f"    {key}: {field_value!r}")
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) if blocks else repr(payload)
+
+
 def _commit_completion(
     run_conn: "sqlite3.Connection",
     *,
@@ -650,13 +713,18 @@ def _commit_completion(
     counters.chunks_done += 1
     if validated.matched:
         counters.matches += 1
-        _log.debug(
-            "chunk %d of file %d: matched (%dms): %s",
-            chunk.index,
-            file_id,
-            completion.latency_ms,
-            validated.payload,
-        )
+        if validated.payload is None:
+            _log.debug(
+                "chunk %d of file %d: matched (%dms)", chunk.index, file_id, completion.latency_ms
+            )
+        else:
+            _log.debug(
+                "chunk %d of file %d: matched (%dms):\n%s",
+                chunk.index,
+                file_id,
+                completion.latency_ms,
+                _format_match(validated.payload, output=manifest.output),
+            )
     else:
         _log.debug(
             "chunk %d of file %d: no match (%dms)",
