@@ -414,6 +414,35 @@ class RunsRepository:
         ).fetchone()
         return None if found is None else str(found["manifest_snapshot"])
 
+    def get_calibrated_response_ratio(self, run_id: int) -> float | None:
+        """Returns the run's locked calibration ratio (ADR-0022), or `None` if
+        calibration hasn't locked in yet.
+
+        A dedicated lookup rather than a `RunRow` field, mirroring
+        `get_manifest_snapshot`: most `RunRow` consumers (a status listing) have no use
+        for it.
+        """
+        found = self.conn.execute(
+            "SELECT calibrated_response_ratio FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if found is None or found["calibrated_response_ratio"] is None:
+            return None
+        return float(found["calibrated_response_ratio"])
+
+    def set_calibrated_response_ratio(self, run_id: int, ratio: float) -> None:
+        """Locks in a run's calibrated response ratio (ADR-0022).
+
+        Written exactly once per run, the moment
+        `glyphwell.search.calibration.Calibration.record` reports enough samples —
+        never overwritten afterward, so chunk sizing stays deterministic across a
+        resume.
+        """
+        self.conn.execute(
+            "UPDATE runs SET calibrated_response_ratio = ?, updated_at = datetime('now')"
+            " WHERE run_id = ?",
+            (ratio, run_id),
+        )
+
     def find_by_hash(self, manifest_hash: Sha256) -> Sequence[RunRow]:
         """Searches already launched for this manifest, most recent first."""
         rows = self.conn.execute(

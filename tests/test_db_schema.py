@@ -1,6 +1,7 @@
 """The two schemas apply cleanly and carry the right version."""
 
 import sqlite3
+from pathlib import Path
 
 from glyphwell.db import (
     CATALOG_SCHEMA_VERSION,
@@ -110,6 +111,53 @@ def test_fresh_run_files_has_rel_path(run_db: sqlite3.Connection) -> None:
     """Duplicated from the catalog's `subtitle_files.rel_path` at enqueue time, so the
     work queue's deterministic order needs no cross-database join (see ADR-0018)."""
     assert "rel_path" in _column_names(run_db, "run_files")
+
+
+def test_fresh_run_has_calibrated_response_ratio_column(run_db: sqlite3.Connection) -> None:
+    """ADR-0022's locked calibration ratio — see `glyphwell.search.calibration`."""
+    assert "calibrated_response_ratio" in _column_names(run_db, "runs")
+
+
+def test_run_migration_from_v1_adds_calibrated_response_ratio_column(tmp_path: Path) -> None:
+    """A pre-ADR-0022 run database (version 1, no calibration column) upgrades cleanly,
+    and rows written before the upgrade are preserved."""
+    path = tmp_path / "old_run.db"
+    seed = sqlite3.connect(path, isolation_level=None)
+    try:
+        # The `runs` table exactly as version 1 shipped it, before ADR-0022's column.
+        seed.executescript(
+            """
+            CREATE TABLE runs (
+                run_id            INTEGER PRIMARY KEY,
+                manifest_path     TEXT NOT NULL,
+                manifest_hash     TEXT NOT NULL,
+                manifest_snapshot TEXT NOT NULL,
+                model             TEXT NOT NULL,
+                status            TEXT NOT NULL DEFAULT 'pending',
+                created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                finished_at       TEXT
+            ) STRICT;
+            """
+        )
+        seed.execute(
+            "INSERT INTO runs (manifest_path, manifest_hash, manifest_snapshot, model)"
+            " VALUES ('m.yaml', 'hash-a', 'name: m', 'test-model')"
+        )
+        seed.execute("PRAGMA user_version = 1")
+    finally:
+        seed.close()
+
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert initialize_run(conn) == RUN_SCHEMA_VERSION
+        assert current_version(conn) == RUN_SCHEMA_VERSION
+        row = conn.execute("SELECT * FROM runs WHERE manifest_hash = 'hash-a'").fetchone()
+        assert row["manifest_path"] == "m.yaml"
+        assert row["calibrated_response_ratio"] is None
+    finally:
+        conn.close()
 
 
 def test_results_unique_constraint_enforces_idempotence(run_db: sqlite3.Connection) -> None:

@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS runs (
     manifest_snapshot TEXT NOT NULL,
     model             TEXT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'pending',  -- pending|running|paused|done|failed
+    -- Locked response-to-input token ratio (ADR-0022), NULL until enough of the run's own
+    -- completions have been observed to calibrate one (see glyphwell.search.calibration).
+    -- Written once, never updated afterward: chunk sizing must stay deterministic across
+    -- a resume (CLAUDE.md §7).
+    calibrated_response_ratio REAL,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
     finished_at       TEXT

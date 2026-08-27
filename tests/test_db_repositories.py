@@ -2,6 +2,8 @@
 
 import sqlite3
 
+import pytest
+
 from glyphwell.db.repositories import (
     CorpusDownloadRow,
     CorpusDownloadsRepository,
@@ -297,6 +299,21 @@ def test_runs_get_manifest_snapshot(run_db: sqlite3.Connection) -> None:
     snapshot = RunsRepository(run_db).get_manifest_snapshot(run_id)
     assert snapshot == "name: a\nmodel: m\nprompt:\n  user: x\n"
     assert RunsRepository(run_db).get_manifest_snapshot(run_id + 999) is None
+
+
+def test_runs_calibrated_response_ratio_defaults_to_none(run_db: sqlite3.Connection) -> None:
+    run_id = _run_id(run_db)
+    assert RunsRepository(run_db).get_calibrated_response_ratio(run_id) is None
+
+
+def test_runs_set_then_get_calibrated_response_ratio(run_db: sqlite3.Connection) -> None:
+    """ADR-0022: the locked ratio is a dedicated column, written once by calibration."""
+    run_id = _run_id(run_db)
+    repo = RunsRepository(run_db)
+
+    repo.set_calibrated_response_ratio(run_id, 0.42)
+
+    assert repo.get_calibrated_response_ratio(run_id) == pytest.approx(0.42)
 
 
 def test_runs_find_by_hash_most_recent_first(run_db: sqlite3.Connection) -> None:

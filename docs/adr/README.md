@@ -31,6 +31,8 @@ recorded here.
 | [0018](0018-split-catalog-and-run-databases.md) | Split the catalog and per-search run databases | Accepted | 2026-08-26 |
 | [0019](0019-expand-series-imdb-ids-to-episodes.md) | Expand a series id in `select.imdb_ids` to its episodes | Accepted | 2026-08-26 |
 | [0020](0020-deduplicate-subtitle-translations-by-size.md) | Deduplicate subtitle translations by size | Accepted | 2026-08-26 |
+| [0021](0021-token-budget-chunking.md) | Size chunks from a token budget, not a fixed sentence count | Accepted | 2026-08-27 |
+| [0022](0022-calibrate-the-response-ratio-from-observed-completions.md) | Calibrate the response ratio from a run's own observed completions | Accepted | 2026-08-27 |
 
 ## Statuses
 

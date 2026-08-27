@@ -8,6 +8,7 @@ from typing import override
 
 import pytest
 
+from glyphwell import tokens
 from glyphwell.config import Settings
 from glyphwell.db import connect, initialize_catalog, initialize_run
 from glyphwell.db.repositories import (
@@ -74,6 +75,23 @@ class _StoppingLlmClient(_FakeLlmClient):
         assert self.engine is not None
         self.engine.request_stop()
         return completion
+
+
+class _CalibratingLlmClient(_FakeLlmClient):
+    """Reports a fixed `completion_tokens`, so every call is a usable calibration sample."""
+
+    @override
+    def complete(
+        self,
+        *,
+        model: str,
+        user: str,
+        system: str | None = None,
+        options: Mapping[str, JsonValue] | None = None,
+        json_schema: Mapping[str, JsonValue] | None = None,
+    ) -> Completion:
+        self.calls += 1
+        return Completion(text="ok", payload=None, model=model, latency_ms=1, completion_tokens=4)
 
 
 class _FailingLlmClient(_FakeLlmClient):
@@ -378,6 +396,43 @@ def test_resume_does_not_rebuild_the_queue(tmp_path: Path, monkeypatch: pytest.M
 
         assert resumed.interrupted is False
         assert resumed.chunks_done == 1
+
+
+def test_calibration_locks_in_and_is_persisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0022: once enough real completions are observed, the response ratio locks in
+    and is written to `runs.calibrated_response_ratio` — the engine-level wiring on top
+    of the pure math already covered by `tests/test_tokens.py` and
+    `tests/test_search_calibration.py`. The calibration constants are patched down to
+    what this fixture's 2-chunk file can actually produce; the shipped
+    `CALIBRATION_SAMPLE_SIZE` (50) would need a much larger corpus to exercise the same
+    wiring.
+    """
+    monkeypatch.setattr(tokens, "CALIBRATION_SAMPLE_SIZE", 2)
+    monkeypatch.setattr(tokens, "CALIBRATION_MIN_CHUNK_TOKENS", 1)
+
+    settings = Settings(data_dir=tmp_path / "data", _env_file=None)
+    settings.ensure_directories()
+    archive_path = _build_archive(tmp_path)
+
+    with (
+        connect(settings.catalog_database_path, create=True) as catalog_conn,
+        connect(tmp_path / "data" / "run.db", create=True) as run_conn,
+    ):
+        initialize_catalog(catalog_conn)
+        initialize_run(run_conn)
+        _seed(settings, catalog_conn, archive_path)
+        client = _CalibratingLlmClient()
+        engine = SearchEngine(
+            catalog_conn=catalog_conn, run_conn=run_conn, client=client, settings=settings
+        )
+        outcome = engine.start(load(_write_manifest(tmp_path)))
+        ratio = RunsRepository(run_conn).get_calibrated_response_ratio(outcome.run_id)
+
+    assert outcome.chunks_done == 2
+    assert ratio is not None
+    assert ratio > 0
 
 
 def test_a_failing_file_is_marked_as_error_without_aborting_the_run(tmp_path: Path) -> None:

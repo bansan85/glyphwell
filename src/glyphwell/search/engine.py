@@ -45,9 +45,10 @@ from glyphwell.manifest.prefilter import Prefilter
 from glyphwell.metadata.resolver import SqliteTitleProvider
 from glyphwell.ollama.prompts import render, render_context, render_overhead
 from glyphwell.search import planner
+from glyphwell.search.calibration import Calibration
 from glyphwell.search.checkpoint import commit_chunk, load_checkpoint, resume_position
 from glyphwell.search.results import validate_output
-from glyphwell.tokens import chunk_token_budget
+from glyphwell.tokens import chunk_token_budget, estimate_tokens
 from glyphwell.types import ImdbId
 
 if TYPE_CHECKING:
@@ -209,6 +210,7 @@ class SearchEngine:
         titles = SqliteTitleProvider(self.catalog_conn)
         run_files = RunFilesRepository(self.run_conn)
         counters = _Counters()
+        calibration = _load_calibration(self.run_conn, run_id)
         archives: dict[tuple[str, str], CorpusArchive] = {}
 
         try:
@@ -221,6 +223,7 @@ class SearchEngine:
                 file_id,
                 manifest,
                 titles,
+                calibration,
             )
             if state is None:
                 return 0
@@ -259,6 +262,7 @@ class SearchEngine:
                     manifest=manifest,
                     completion=completion,
                     counters=counters,
+                    calibration=calibration,
                 )
                 chunk = _next_evaluable_chunk(
                     self.run_conn,
@@ -330,7 +334,8 @@ class SearchEngine:
         )
 
         prefilter = Prefilter.compile(manifest.prefilter)
-        outcome = self._process_queue(run_id, manifest, prefilter, limit=limit)
+        calibration = _load_calibration(self.run_conn, run_id)
+        outcome = self._process_queue(run_id, manifest, prefilter, calibration, limit=limit)
         runs.set_status(run_id, RunStatus.PAUSED if outcome.interrupted else RunStatus.DONE)
         _log.info(
             "run %d %s: %d file(s), %d chunk(s) done, %d skipped, %d match(es)",
@@ -348,6 +353,7 @@ class SearchEngine:
         run_id: int,
         manifest: SearchManifest,
         prefilter: Prefilter,
+        calibration: Calibration,
         *,
         limit: int | None,
     ) -> SearchOutcome:
@@ -376,6 +382,7 @@ class SearchEngine:
                             planned.file_id,
                             manifest,
                             titles,
+                            calibration,
                         )
                         if state is None:
                             continue
@@ -436,6 +443,7 @@ class SearchEngine:
                             manifest=manifest,
                             completion=completion,
                             counters=counters,
+                            calibration=calibration,
                         )
 
                         if self._stop_event.is_set():
@@ -497,6 +505,18 @@ def _manifest_from_run(run_conn: "sqlite3.Connection", run_id: int) -> SearchMan
     return SearchManifest.model_validate(raw)
 
 
+def _load_calibration(run_conn: "sqlite3.Connection", run_id: int) -> Calibration:
+    """Seeds a run's calibration state from any ratio already locked and persisted.
+
+    A process restarted mid-run (crash, or a resume in a fresh invocation) always starts
+    with no in-memory samples: if calibration hadn't locked in before the interruption,
+    it restarts accumulating from zero rather than replaying lost samples (ADR-0022) — a
+    minor, documented cost, never a correctness issue, since `DEFAULT_RESPONSE_RATIO`
+    remains a safe chunk size regardless of how many samples were seen before.
+    """
+    return Calibration(locked_ratio=RunsRepository(run_conn).get_calibrated_response_ratio(run_id))
+
+
 def _get_archive(
     archives: dict[tuple[str, str], CorpusArchive],
     catalog_conn: "sqlite3.Connection",
@@ -550,6 +570,7 @@ def _open_file(
     file_id: int,
     manifest: SearchManifest,
     titles: SqliteTitleProvider,
+    calibration: Calibration,
 ) -> _FileState | None:
     """Opens a file's member stream and positions its chunk generator at its cursor.
 
@@ -593,7 +614,10 @@ def _open_file(
         imdb_id=file_row.imdb_id,
     )
     token_budget = chunk_token_budget(
-        num_ctx=num_ctx, num_predict=num_predict, overhead_text=overhead_text
+        num_ctx=num_ctx,
+        num_predict=num_predict,
+        overhead_text=overhead_text,
+        response_ratio=calibration.response_ratio,
     )
 
     try:
@@ -798,6 +822,38 @@ def _token_summary(completion: "Completion", *, num_ctx: int, num_predict: int) 
     )
 
 
+def _record_calibration_sample(
+    run_conn: "sqlite3.Connection",
+    *,
+    run_id: int,
+    chunk: "Chunk",
+    completion: "Completion",
+    calibration: Calibration,
+) -> None:
+    """Feeds one real completion into the run's calibration (ADR-0022).
+
+    A no-op once `calibration` is already locked, and skipped entirely when Ollama's
+    response omits `eval_count` (older servers) — nothing to calibrate against.
+    Persists the ratio the moment it locks in, so a later resume (even in a fresh
+    process) reuses it instead of recalibrating.
+    """
+    if completion.completion_tokens is None:
+        return
+    chunk_tokens = estimate_tokens(chunk.render(with_ids=True))
+    newly_locked = calibration.record(
+        chunk_tokens=chunk_tokens, completion_tokens=completion.completion_tokens
+    )
+    if newly_locked is not None:
+        RunsRepository(run_conn).set_calibrated_response_ratio(run_id, newly_locked)
+        _log.info(
+            "run %d: calibrated response ratio locked at %.3f (chunks now sized against"
+            " num_predict / %.3f instead of num_predict)",
+            run_id,
+            newly_locked,
+            newly_locked,
+        )
+
+
 def _commit_completion(
     run_conn: "sqlite3.Connection",
     *,
@@ -808,6 +864,7 @@ def _commit_completion(
     manifest: SearchManifest,
     completion: "Completion",
     counters: _Counters,
+    calibration: Calibration,
 ) -> None:
     """Validates a model response and commits it, updating the running counters."""
     num_ctx, num_predict = manifest.ollama_context_options()
@@ -829,6 +886,9 @@ def _commit_completion(
         latency_ms=completion.latency_ms,
     )
     counters.chunks_done += 1
+    _record_calibration_sample(
+        run_conn, run_id=run_id, chunk=chunk, completion=completion, calibration=calibration
+    )
     if validated.matched:
         counters.matches += 1
         if validated.payload is None:

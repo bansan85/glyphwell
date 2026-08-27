@@ -28,9 +28,9 @@ below sit under `Unreleased`.
   fetched: `titles`, `subtitle_files`, `corpus_downloads`, `imports`) and a **run**
   database per search (`runs`, `run_files`, `results`), each with its own schema file
   (`src/glyphwell/db/schema_catalog.sql`, `schema_run.sql`) and its own
-  `PRAGMA user_version` history (`CATALOG_SCHEMA_VERSION`, `RUN_SCHEMA_VERSION`, both `1`
+  `PRAGMA user_version` history (`CATALOG_SCHEMA_VERSION` `1`, `RUN_SCHEMA_VERSION` `2`
   — ADR-0018). Deliberately no FTS5: subtitle text is neither copied nor indexed
-  (ADR-0002).
+  (ADR-0002). Run schema version 2 adds `runs.calibrated_response_ratio` (ADR-0022).
 - `glyphwell db init` creates a valid catalog database; `db status` reports the schema
   version and row counts; `db vacuum` compacts it. A run database has no separate init
   step — `search run` creates and upgrades it (`initialize_run`, idempotent).
@@ -168,6 +168,20 @@ below sit under `Unreleased`.
   now required, positive-integer manifest fields
   (`SearchManifest._check_context_options`) — chunk sizing depends on both, so neither
   can be silently absent.
+- `glyphwell/search/calibration.py` (new `Calibration`) and `glyphwell/tokens.py`'s new
+  `calibrate_response_ratio`/`DEFAULT_RESPONSE_RATIO`/`CALIBRATION_MIN_CHUNK_TOKENS`/
+  `CALIBRATION_SAMPLE_SIZE`/`CALIBRATION_MARGIN_RATIO` replace ADR-0021's blind `1x
+  num_predict` response-safety cap with a ratio measured from a run's own early
+  completions (ADR-0022): real runs of `searches/example.yaml` showed most completions
+  using only 7-17% of `num_predict` (up to 38% for the densest matches observed), so the
+  original `1x` assumption was several times more conservative than the task actually
+  needed. `chunk_token_budget` gained a `response_ratio` parameter (default 1.0,
+  reproducing ADR-0021's original behavior exactly); once `CALIBRATION_SAMPLE_SIZE`
+  qualifying completions have been observed, the **worst** ratio seen (plus a 50%
+  margin) locks in for the rest of the run and is persisted to a new
+  `runs.calibrated_response_ratio` column (`RUN_SCHEMA_VERSION` 1 -> 2), so a resume —
+  even in a fresh process — reuses it instead of recalibrating, keeping chunk sizing
+  deterministic per manifest (CLAUDE.md §7).
 - `manifest/prefilter.py`: `Prefilter` compiles a manifest's patterns once per search
   (literal patterns `re.escape`-d, folding literal and regex matching into one code path)
   and evaluates `any`/`all`/`none`/`off` against a chunk's rendered text.
@@ -398,8 +412,19 @@ breaking changes for users. They do change names that were already committed.
   by the `start()` that created it. `db/connection.py` additionally raises the page cache
   from SQLite's ~2 MB default to 256 MiB and checkpoints (`PRAGMA wal_checkpoint(TRUNCATE)`)
   the WAL when a connection closes, so it no longer accumulates across invocations.
+- **A single truncated JSON response abandoned the whole file, not just that chunk.**
+  ADR-0021/ADR-0022 size chunks to make a response overrunning `num_predict` rare, not
+  impossible — and when it did happen on a real run, `OllamaClient.complete` raised
+  `ModelOutputError` (a subclass of `OllamaError`) straight from the first attempt,
+  which `search/engine.py` treats as fatal for the whole file. `complete` now retries an
+  unparseable response with `num_predict` grown by 1.5x per attempt
+  (`max_output_retries`, default 3 total attempts), capped at what the just-measured
+  `prompt_eval_count` leaves of `num_ctx` so a retry cannot start truncating the *prompt*
+  instead. Chunk boundaries and `chunk_index` are untouched — the retry only widens the
+  response budget for that one call, so it carries none of the resume-invariant risk a
+  reactive re-chunk would (CLAUDE.md §7).
 
-All seven defects are covered by regression tests.
+All eight defects are covered by regression tests.
 
 ### Public API
 

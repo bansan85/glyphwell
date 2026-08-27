@@ -6,8 +6,13 @@ import pytest
 
 from glyphwell.errors import ManifestError
 from glyphwell.tokens import (
+    CALIBRATION_MARGIN_RATIO,
+    CALIBRATION_MIN_CHUNK_TOKENS,
+    CALIBRATION_SAMPLE_SIZE,
     CHARS_PER_TOKEN,
+    DEFAULT_RESPONSE_RATIO,
     SAFETY_MARGIN_RATIO,
+    calibrate_response_ratio,
     chunk_token_budget,
     estimate_tokens,
 )
@@ -66,3 +71,48 @@ def test_chunk_token_budget_margin_scales_with_num_ctx() -> None:
     small = chunk_token_budget(num_ctx=1000, num_predict=500, overhead_text="")
     large = chunk_token_budget(num_ctx=100_000, num_predict=50_000, overhead_text="")
     assert large > small * 50
+
+
+def test_chunk_token_budget_default_response_ratio_matches_num_predict() -> None:
+    """No `response_ratio` given reproduces ADR-0021's original, uncalibrated cap."""
+    budget = chunk_token_budget(num_ctx=24576, num_predict=1024, overhead_text="short overhead")
+    assert budget == math.floor(1024 / DEFAULT_RESPONSE_RATIO)
+
+
+def test_chunk_token_budget_a_smaller_response_ratio_widens_the_predict_cap() -> None:
+    """ADR-0022: a calibrated ratio below 1.0 (a task whose response does not scale much
+    with its input) raises the num_predict-derived cap, and therefore densifies chunks —
+    still bounded by the context ceiling, exercised separately above."""
+    default_ratio_budget = chunk_token_budget(num_ctx=100_000, num_predict=1024, overhead_text="")
+    calibrated_budget = chunk_token_budget(
+        num_ctx=100_000, num_predict=1024, overhead_text="", response_ratio=0.2
+    )
+    assert calibrated_budget == math.floor(1024 / 0.2)
+    assert calibrated_budget > default_ratio_budget
+
+
+def test_calibrate_response_ratio_is_none_below_the_sample_size() -> None:
+    samples = [(CALIBRATION_MIN_CHUNK_TOKENS, 50)] * (CALIBRATION_SAMPLE_SIZE - 1)
+    assert calibrate_response_ratio(samples) is None
+
+
+def test_calibrate_response_ratio_locks_the_margin_adjusted_worst_ratio() -> None:
+    """The worst (highest) ratio drives the result, not an average — a single denser
+    chunk in the sample must not be diluted away by many low-ratio ones."""
+    samples = [(1000, 100)] * (CALIBRATION_SAMPLE_SIZE - 1) + [(1000, 400)]
+    ratio = calibrate_response_ratio(samples)
+    assert ratio == pytest.approx(0.4 * (1 + CALIBRATION_MARGIN_RATIO))
+
+
+def test_calibrate_response_ratio_excludes_near_empty_chunks() -> None:
+    """A tiny chunk that happens to score a large completion must not dominate the
+    max-based statistic — see `CALIBRATION_MIN_CHUNK_TOKENS`'s docstring."""
+    noisy_outlier = (10, 500)  # ratio 50.0, but far below CALIBRATION_MIN_CHUNK_TOKENS
+    samples = [noisy_outlier] + [(1000, 100)] * CALIBRATION_SAMPLE_SIZE
+    ratio = calibrate_response_ratio(samples)
+    assert ratio == pytest.approx(0.1 * (1 + CALIBRATION_MARGIN_RATIO))
+
+
+def test_calibrate_response_ratio_is_none_when_every_qualifying_completion_is_empty() -> None:
+    samples = [(CALIBRATION_MIN_CHUNK_TOKENS, 0)] * CALIBRATION_SAMPLE_SIZE
+    assert calibrate_response_ratio(samples) is None

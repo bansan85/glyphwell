@@ -190,9 +190,25 @@ alongside `num_predict` before chunk sizing became automatic. A manifest whose r
 schema does not scale with input (a lone boolean, say) can still get denser chunks by
 raising `num_predict` beyond what a single response actually needs.
 
+That `1x num_predict` cap is only the *starting* ratio, and only until a run has enough
+of its own data to do better (ADR-0022). Once `50` real completions whose chunk was at
+least `200` estimated tokens have been observed, glyphwell locks in the actual worst
+completion-to-chunk ratio seen (plus a 50% margin) and reuses it for the rest of the
+run — persisted to the run database, so a resume picks up the same ratio rather than
+recalibrating. A task whose response does not scale much with its input (a `matched`
+boolean plus at most a couple of findings, say) ends up with noticeably denser chunks
+than the original `1x` cap allowed, with no manifest change required; a task whose
+response does scale with input keeps a ratio close to `1x`, since the calibration sample
+itself would show a high worst-case ratio. Watch for an `INFO` line reading
+`calibrated response ratio locked at ...` early in a run's log — and, if a completion's
+share of `num_predict` (`_token_summary`'s debug line) keeps climbing toward 100% after
+that point, see `CALIBRATION_MARGIN_RATIO`'s docstring in
+[glyphwell/tokens.py](../src/glyphwell/tokens.py) for how to retune it.
+
 Since `num_ctx`/`num_predict` are manifest fields, this stays as deterministic per
 manifest as a fixed sentence count used to be — see
-[glyphwell/tokens.py](../src/glyphwell/tokens.py).
+[glyphwell/tokens.py](../src/glyphwell/tokens.py) and
+[glyphwell/search/calibration.py](../src/glyphwell/search/calibration.py).
 
 `chunk.overlap` sentences are repeated between one chunk and the next so an exchange
 straddling the boundary is not analyzed only once. One model call per chunk, one SQLite
@@ -222,11 +238,23 @@ corpus, not partway through it.
 has not run yet, or `select` (language, title type, year, ids) matches nothing. Loosen the
 filters or run `corpus index` first.
 
-**A model response is rejected (`ModelOutputError`)** — the response did not conform to
-`output.schema` even though it was requested from Ollama (ADR-0013), or, for a schema
-using the `excerpt_ids` convention (*Citing lines instead of quoting them* above), an id
-did not refer to a line of the chunk. That file is marked in error and the rest of the
-run continues; see *Choosing a model* above if this happens often.
+**A model response is rejected (`ModelOutputError`)** — either the response did not
+conform to `output.schema` even though it was requested from Ollama (ADR-0013), or, for a
+schema using the `excerpt_ids` convention (*Citing lines instead of quoting them* above),
+an id did not refer to a line of the chunk. The file is marked in error and the rest of
+the run continues; see *Choosing a model* above if this happens often.
+
+A response that is not even syntactically valid JSON is handled separately, before it
+ever reaches this error: it is almost always a completion cut off mid-string because it
+overran `num_predict` despite the chunking/calibration above. `OllamaClient.complete`
+retries it with `num_predict` grown 1.5x per attempt (`max_output_retries`, 3 total
+attempts by default), capped at what the just-measured prompt size leaves of `num_ctx` so
+a retry cannot start truncating the prompt instead. Watch for a `WARNING` line reading
+`response for ... was not valid JSON (attempt .../..)`: it recovers the chunk without
+losing the rest of the file. If it fires often on the same manifest, that is the same
+signal *Chunking and resume* above already tells you to watch for — see
+`CALIBRATION_MARGIN_RATIO`'s docstring in
+[glyphwell/tokens.py](../src/glyphwell/tokens.py).
 
 ## What's next
 

@@ -34,7 +34,7 @@ _log = get_logger(__name__)
 CATALOG_SCHEMA_VERSION: Final = 1
 """Catalog schema version expected by this code."""
 
-RUN_SCHEMA_VERSION: Final = 1
+RUN_SCHEMA_VERSION: Final = 2
 """Run schema version expected by this code."""
 
 # Migration steps to apply to go from version N-1 to version N. Version 1 is produced by
@@ -42,7 +42,11 @@ RUN_SCHEMA_VERSION: Final = 1
 # fresh at 1: nothing has shipped with the old, single-database schema, so there is no
 # prior version to carry forward (see ADR-0018).
 _CATALOG_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
-_RUN_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {}
+_RUN_MIGRATIONS: Final[Mapping[int, Sequence[str]]] = {
+    # ADR-0022: locked response-to-input token ratio, NULL until a run's calibration
+    # measures one. `schema_run.sql` already declares this column for a fresh database.
+    2: ("ALTER TABLE runs ADD COLUMN calibrated_response_ratio REAL",),
+}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
